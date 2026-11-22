@@ -29,3 +29,5 @@ npm run build
 ## License
 
 MIT. Copyright (c) 2026 EXTANT APE. See `LICENSE`.
+
+Contributions arrive as pull requests from `co/` branches in this repo. Only the owner merges.
