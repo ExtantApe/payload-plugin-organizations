@@ -5,7 +5,7 @@ Kept by this repo's owning session, per `~/Code/CLAUDE.md`, "Test self-audits". 
 ## 2026-11-23: after the review fixes
 
 - Promises added: no approving through a second account; the veto is not asked at invitation, so inviters see one answer; `refuseMember` is a function or exactly `false`; no start without transactions unless opted out; no bulk update or delete; public suffixes refused; matcher needs a verified email and runs the veto; the picker respects read access; history keeps values and one row per change.
-- Covered: each, in `test/members.test.ts`, `test/organizations.test.ts`, `test/doors.test.ts`, `test/plugin.test.ts` and the new `test/transactions.test.ts` (102 tests in all), including the exact second-account sequence.
+- Covered: each, in `test/members.test.ts`, `test/organizations.test.ts`, `test/doors.test.ts`, `test/plugin.test.ts` and the new `test/transactions.test.ts` (103 tests in all), including the exact second-account sequence.
 - Added after the second review: level change on an invited row, unknown-id and unseen-duplicate invitations, reopening with invited people, and leaving then approving.
 - Gaps skipped: the early-exit message for a stranger on a closed organization when the host's `canInvite` allows them (the host chose to allow it).
 

@@ -131,7 +131,7 @@ describe('the veto', () => {
     await state.payload.update({ collection: 'users', id: dee.id as never, data: { minor: false } as never, overrideAccess: true })
     await change(dee, (await rowOf(org.id, dee)).id, { status: 'active' })
     await state.payload.update({ collection: 'users', id: dee.id as never, data: { minor: true } as never, overrideAccess: true })
-    expect(await refused(change(cy, (await rowOf(org.id, dee)).id, { level: 'viewer' }))).toMatch(/Not available/)
+    expect(await refused(change(cy, (await rowOf(org.id, dee)).id, { level: 'viewer' }))).toMatch(/can’t change this person’s level/)
     expect(await refused(server((await rowOf(org.id, dee)).id, { level: 'coordinator' }))).toMatch(/Not available/)
     expect((await rowOf(org.id, dee)).level).toBe('member')
   })
@@ -467,6 +467,24 @@ describe('what an inviter can learn from the answers', () => {
     expect(dup).not.toMatch(/already/)
     // A Coordinator sees every row, so they are told plainly.
     expect(await refused(invite(cy, org.id, { user: kid.id, level: 'viewer' }))).toMatch(/already/)
+  })
+})
+
+describe('a level change on an active row', () => {
+  it('looks the same to the changer for a vetoed member and one they may not change', async () => {
+    const a = await join(org.id, cy, dee, 'member')
+    const b = await join(org.id, cy, eli, 'member')
+    await state.payload.update({ collection: 'users', id: dee.id as never, data: { minor: true } as never, overrideAccess: true })
+    const before = (await events()).length
+    answers.canChangeLevel = ({ member }: { member: { user?: unknown } }) => String(member.user) !== String(eli.id)
+    const vetoed = await refused(change(cy, a.id, { level: 'viewer' }))
+    const notAllowed = await refused(change(cy, b.id, { level: 'viewer' }))
+    expect(vetoed).toBe(notAllowed)
+    expect(vetoed).not.toMatch(/Not available/)
+    expect((await rowOf(org.id, dee)).level).toBe('member')
+    expect((await events()).length).toBe(before)
+    // Server code still sees the reason.
+    expect(await refused(state.payload.update({ collection: 'organization-members' as never, id: a.id as never, data: { level: 'viewer' } as never, overrideAccess: true }))).toMatch(/Not available/)
   })
 })
 

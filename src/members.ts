@@ -239,7 +239,11 @@ export function membersCollection(s: Resolved, opts: OrganizationsOptions): Coll
               if (before.status === 'invited') throw refuse('A level can’t be changed until the person accepts. Invite them again at the new level.')
             }
             if (before.status === 'active' && before.level === 'coordinator' && level !== 'coordinator') await keepACoordinator(req, organization.id, before.id as string | number)
-            await vetoed(opts, s.users, req, organization, before.user, level, 'change-level')
+            // Server code sees the veto's reason. Anyone else gets the refusal they'd get for any change they may not make, so a changer can't tell who the veto covers.
+            if (trusted) await vetoed(opts, s.users, req, organization, before.user, level, 'change-level')
+            else await vetoed(opts, s.users, req, organization, before.user, level, 'change-level').catch(() => {
+              throw refuse('You can’t change this person’s level.')
+            })
             await emit(req, opts.audit?.before, { event: 'change-level', phase: 'before', organization, membership: { ...before, level, status }, previous: before, by: asker }, true)
           }
           if (statusChanged) {
