@@ -21,6 +21,30 @@ export async function needTransaction(req: PayloadRequest, s: Resolved) {
   if (s.needsTransactions && !(await req.transactionID)) throw refuse('This change needs a transaction, so it wasn’t made.')
 }
 
+/**
+ * True only for the database's write-conflict error (MongoDB code 112, `WriteConflict`), also when it is wrapped as a cause.
+ * The `TransientTransactionError` label and the message text are not enough on their own: other faults carry them too, and mapping those would hide them.
+ */
+export const isConflict = (error: unknown, depth = 0): boolean => {
+  const x = error as { code?: unknown; codeName?: unknown; cause?: unknown; errorResponse?: unknown } | null
+  if (!x || typeof x !== 'object' || depth > 5) return false
+  if (x.code === 112 || x.codeName === 'WriteConflict') return true
+  return isConflict(x.cause, depth + 1) || isConflict(x.errorResponse, depth + 1)
+}
+
+/**
+ * Writes the row once to hold its lock for this transaction. When two changes meet on the same row at once, the second
+ * gets a plain refusal here and not a database error halfway through the save.
+ */
+export async function claim(req: PayloadRequest, collection: string, id: unknown) {
+  try {
+    await req.payload.db.updateOne({ collection: collection as never, id: id as never, data: {} as never, req, returning: false } as never)
+  } catch (error) {
+    if (isConflict(error)) throw refuse('This was just changed by someone else. Check it and try again.')
+    throw error
+  }
+}
+
 /** The id of a document given as a document, an id, or nothing. */
 export const idOf = (value: unknown): string | number | null => {
   if (value === null || value === undefined) return null

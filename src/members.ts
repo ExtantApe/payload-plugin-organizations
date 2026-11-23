@@ -1,7 +1,7 @@
 import type { CollectionConfig, PayloadRequest, Where } from 'payload'
 
 import { emit, involved, noBulk, note, orgOf } from './organizations.js'
-import { asInternal, exactlyTrue, heldBy, idOf, isInternal, levelIn, levelOf, needTransaction, refuse, signedIn } from './helpers.js'
+import { asInternal, claim, exactlyTrue, heldBy, idOf, isInternal, levelIn, levelOf, needTransaction, refuse, signedIn } from './helpers.js'
 import { GENERAL, loadOrganization, vetoed } from './veto.js'
 import { EVENTS, LEVELS, MEMBERS, ORGANIZATIONS, RANK, type Level, type MemberArgs, type Membership, type MemberStatus, type OrganizationsOptions, type Resolved } from './types.js'
 
@@ -207,98 +207,105 @@ export function membersCollection(s: Resolved, opts: OrganizationsOptions): Coll
             return data
           }
 
-          // An update. Organization, person and who invited never change; only level and status do.
-          const before = normalize(originalDoc)
-          const sent = plain(data)
-          for (const f of ['organization', 'user', 'invitedBy'] as const) {
-            if (f in sent && String(sent[f] ?? '') !== String(before[f] ?? '')) throw refuse('Only the level and status can be changed.')
-          }
-          for (const f of ['liveKey', 'acceptedAt', 'removedAt', 'removedBy']) delete data[f]
-          // A pending promotion changes only through the level paths below. Sending it back unchanged is fine; sending null cancels it.
-          const wanted = 'pendingLevel' in data ? (data.pendingLevel as unknown) : undefined
-          delete data.pendingLevel
-          const held = before.pendingLevel ?? null
-          if (wanted !== undefined && wanted !== null && wanted !== '' && wanted !== held) throw refuse('Only the level and status can be changed.')
-          const cancelling = held !== null && (wanted === null || wanted === '')
-          const level = levelOf(sent.level ?? before.level)
-          if (!level) throw refuse('Unknown level.')
-          const status = (sent.status ?? before.status) as MemberStatus
-          if (!STATUS.includes(status)) throw refuse('Unknown status.')
-          const levelChanged = level !== before.level
-          const statusChanged = status !== before.status
-          if (!levelChanged && !statusChanged && !cancelling) return data
-          if (before.status === 'removed') throw refuse('A removed member is final. Invite them again.')
-          if (statusChanged && !(before.status === 'invited' && (status === 'active' || status === 'removed')) && !(before.status === 'active' && status === 'removed'))
-            throw refuse('That status change isn’t allowed.')
-          const organization = await loadOrganization(req, before.organization, orgOf)
-          if (!organization) throw refuse('Unknown organization.')
-          const asker = by(req)
-          const self = me !== null && String(me.id) === String(before.user)
-          const ctx = { id: before.id, data: sent }
+          // An update. Every refusal and the veto come first. The row's write lock is taken only once the change is allowed, right before it is written,
+          // so a refused change never touches the row and how it ends can't show who the veto covers.
+          const changed = await (async () => {
+            // Organization, person and who invited never change; only level and status do.
+            const before = normalize(originalDoc)
+            const sent = plain(data)
+            for (const f of ['organization', 'user', 'invitedBy'] as const) {
+              if (f in sent && String(sent[f] ?? '') !== String(before[f] ?? '')) throw refuse('Only the level and status can be changed.')
+            }
+            for (const f of ['liveKey', 'acceptedAt', 'removedAt', 'removedBy']) delete data[f]
+            // A pending promotion changes only through the level paths below. Sending it back unchanged is fine; sending null cancels it.
+            const wanted = 'pendingLevel' in data ? (data.pendingLevel as unknown) : undefined
+            delete data.pendingLevel
+            const held = before.pendingLevel ?? null
+            if (wanted !== undefined && wanted !== null && wanted !== '' && wanted !== held) throw refuse('Only the level and status can be changed.')
+            const cancelling = held !== null && (wanted === null || wanted === '')
+            const level = levelOf(sent.level ?? before.level)
+            if (!level) throw refuse('Unknown level.')
+            const status = (sent.status ?? before.status) as MemberStatus
+            if (!STATUS.includes(status)) throw refuse('Unknown status.')
+            const levelChanged = level !== before.level
+            const statusChanged = status !== before.status
+            if (!levelChanged && !statusChanged && !cancelling) return data
+            if (before.status === 'removed') throw refuse('A removed member is final. Invite them again.')
+            if (statusChanged && !(before.status === 'invited' && (status === 'active' || status === 'removed')) && !(before.status === 'active' && status === 'removed'))
+              throw refuse('That status change isn’t allowed.')
+            const organization = await loadOrganization(req, before.organization, orgOf)
+            if (!organization) throw refuse('Unknown organization.')
+            const asker = by(req)
+            const self = me !== null && String(me.id) === String(before.user)
+            const ctx = { id: before.id, data: sent }
 
-          if (status === 'removed') {
-            if (!trusted && !self && !(await ask(opts.canRemove ?? opts.canChangeLevel, req, before, ctx))) throw refuse('You can’t remove this person.')
-            if (before.status === 'active' && before.level === 'coordinator') await keepACoordinator(req, organization.id, before.id as string | number)
-            data.liveKey = `ended:${String(originalDoc.id)}`
-            data.removedAt = now
-            data.removedBy = asker
-            data.pendingLevel = null
-            await emit(req, opts.audit?.before, { event: 'remove', phase: 'before', organization, membership: { ...before, status }, previous: before, by: asker }, true)
-            return data
-          }
-
-          if (organization.status === 'closed') throw refuse('This organization is closed.')
-          if (cancelling && !levelChanged && !statusChanged) {
-            // The person declines, or someone who may change levels withdraws the offer.
-            if (!trusted && !self && !(await ask(opts.canChangeLevel, req, before, { ...ctx, to: before.level }))) throw refuse('You can’t change this person’s level.')
-            data.pendingLevel = null
-            await emit(req, opts.audit?.before, { event: 'cancel-level', phase: 'before', organization, membership: { ...before, pendingLevel: null }, previous: before, by: asker }, true)
-            return data
-          }
-          if (levelChanged) {
-            const promotion = RANK[level] > RANK[before.level]
-            if (!trusted && self && before.status === 'active' && held === level) {
-              // The person accepts a promotion offered to them. This is the only place the veto is asked about a level for someone else's offer, and the answer goes to them alone.
-              await vetoed(opts, s.users, req, organization, before.user, level, 'change-level')
+            if (status === 'removed') {
+              if (!trusted && !self && !(await ask(opts.canRemove ?? opts.canChangeLevel, req, before, ctx))) throw refuse('You can’t remove this person.')
+              if (before.status === 'active' && before.level === 'coordinator') await keepACoordinator(req, organization.id, before.id as string | number)
+              data.liveKey = `ended:${String(originalDoc.id)}`
+              data.removedAt = now
+              data.removedBy = asker
               data.pendingLevel = null
-              await emit(req, opts.audit?.before, { event: 'change-level', phase: 'before', organization, membership: { ...before, level, pendingLevel: null, status }, previous: before, by: asker }, true)
-            } else {
-              if (!trusted) {
-                if (self && promotion) throw refuse('Nobody raises their own level.')
-                if (!(await ask(opts.canChangeLevel, req, before, { ...ctx, to: level }))) throw refuse('You can’t change this person’s level.')
-                // Asking the veto about someone who hasn't accepted would tell the asker who it covers. Invite them again at the new level; the veto runs when they accept.
-                if (before.status === 'invited') throw refuse('A level can’t be changed until the person accepts. Invite them again at the new level.')
-              }
-              if (promotion && !trusted) {
-                // Every promotion is only offered. The veto runs when the person accepts, so the one who promotes sees the same answer, rows and history for every account.
-                data.level = before.level
-                data.pendingLevel = level
-                await emit(req, opts.audit?.before, { event: 'offer-level', phase: 'before', organization, membership: { ...before, pendingLevel: level }, previous: before, by: asker }, true)
-              } else {
-                if (before.status === 'active' && before.level === 'coordinator' && level !== 'coordinator') await keepACoordinator(req, organization.id, before.id as string | number)
-                // Server code sees the veto's reason on a promotion. A demotion only takes access away, so the veto isn't asked.
-                if (promotion) await vetoed(opts, s.users, req, organization, before.user, level, 'change-level')
+              await emit(req, opts.audit?.before, { event: 'remove', phase: 'before', organization, membership: { ...before, status }, previous: before, by: asker }, true)
+              return data
+            }
+
+            if (organization.status === 'closed') throw refuse('This organization is closed.')
+            if (cancelling && !levelChanged && !statusChanged) {
+              // The person declines, or someone who may change levels withdraws the offer.
+              if (!trusted && !self && !(await ask(opts.canChangeLevel, req, before, { ...ctx, to: before.level }))) throw refuse('You can’t change this person’s level.')
+              data.pendingLevel = null
+              await emit(req, opts.audit?.before, { event: 'cancel-level', phase: 'before', organization, membership: { ...before, pendingLevel: null }, previous: before, by: asker }, true)
+              return data
+            }
+            if (levelChanged) {
+              const promotion = RANK[level] > RANK[before.level]
+              if (!trusted && self && before.status === 'active' && held === level) {
+                // The person accepts a promotion offered to them. This is the only place the veto is asked about a level for someone else's offer, and the answer goes to them alone.
+                await vetoed(opts, s.users, req, organization, before.user, level, 'change-level')
                 data.pendingLevel = null
                 await emit(req, opts.audit?.before, { event: 'change-level', phase: 'before', organization, membership: { ...before, level, pendingLevel: null, status }, previous: before, by: asker }, true)
+              } else {
+                if (!trusted) {
+                  if (self && promotion) throw refuse('Nobody raises their own level.')
+                  if (!(await ask(opts.canChangeLevel, req, before, { ...ctx, to: level }))) throw refuse('You can’t change this person’s level.')
+                  // Asking the veto about someone who hasn't accepted would tell the asker who it covers. Invite them again at the new level; the veto runs when they accept.
+                  if (before.status === 'invited') throw refuse('A level can’t be changed until the person accepts. Invite them again at the new level.')
+                }
+                if (promotion && !trusted) {
+                  // Every promotion is only offered. The veto runs when the person accepts, so the one who promotes sees the same answer, rows and history for every account.
+                  data.level = before.level
+                  data.pendingLevel = level
+                  await emit(req, opts.audit?.before, { event: 'offer-level', phase: 'before', organization, membership: { ...before, pendingLevel: level }, previous: before, by: asker }, true)
+                } else {
+                  if (before.status === 'active' && before.level === 'coordinator' && level !== 'coordinator') await keepACoordinator(req, organization.id, before.id as string | number)
+                  // Server code sees the veto's reason on a promotion. A demotion only takes access away, so the veto isn't asked.
+                  if (promotion) await vetoed(opts, s.users, req, organization, before.user, level, 'change-level')
+                  data.pendingLevel = null
+                  await emit(req, opts.audit?.before, { event: 'change-level', phase: 'before', organization, membership: { ...before, level, pendingLevel: null, status }, previous: before, by: asker }, true)
+                }
               }
             }
-          }
-          if (statusChanged) {
-            // Activating a person: they accept their own invitation. In a pending organization an approver does it instead, and never for themselves.
-            const pending = organization.status === 'pending'
-            if (!trusted) {
-              if (pending) {
-                if (self) throw refuse('Nobody approves themselves.')
-                if (!(await approves(req, organization.id, level))) throw refuse('Only an approver can activate someone in a pending organization.')
-                // Nobody activates someone in an organization they made or belong to, or they could approve it through a second account.
-                if (await involved(req, organization.id, organization.createdBy)) throw refuse('You can’t approve an organization you made or belong to.')
-              } else if (!self) throw refuse('A person accepts their own invitation.')
+            if (statusChanged) {
+              // Activating a person: they accept their own invitation. In a pending organization an approver does it instead, and never for themselves.
+              const pending = organization.status === 'pending'
+              if (!trusted) {
+                if (pending) {
+                  if (self) throw refuse('Nobody approves themselves.')
+                  if (!(await approves(req, organization.id, level))) throw refuse('Only an approver can activate someone in a pending organization.')
+                  // Nobody activates someone in an organization they made or belong to, or they could approve it through a second account.
+                  if (await involved(req, organization.id, organization.createdBy)) throw refuse('You can’t approve an organization you made or belong to.')
+                } else if (!self) throw refuse('A person accepts their own invitation.')
+              }
+              data.acceptedAt = now
+              await vetoed(opts, s.users, req, organization, before.user, level, pending ? 'approve' : 'accept')
+              await emit(req, opts.audit?.before, { event: pending ? 'approve' : 'accept', phase: 'before', organization, membership: { ...before, level, status }, previous: before, by: asker }, true)
             }
-            data.acceptedAt = now
-            await vetoed(opts, s.users, req, organization, before.user, level, pending ? 'approve' : 'accept')
-            await emit(req, opts.audit?.before, { event: pending ? 'approve' : 'accept', phase: 'before', organization, membership: { ...before, level, status }, previous: before, by: asker }, true)
-          }
-          return data
+            return data
+          })()
+          // A withdraw and an accept at the same moment end in one success and one plain refusal.
+          await claim(req, MEMBERS, originalDoc.id)
+          return changed
         },
       ],
       afterChange: [
