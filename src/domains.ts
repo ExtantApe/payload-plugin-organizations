@@ -1,7 +1,9 @@
 import { domainToASCII } from 'node:url'
-import type { Payload, PayloadRequest } from 'payload'
+import { createLocalReq, type Payload, type PayloadRequest } from 'payload'
+import { parse } from 'tldts'
 
-import { settings } from './helpers.js'
+import { idOf, settings } from './helpers.js'
+import { vetoed } from './veto.js'
 import { ORGANIZATIONS, type Resolved } from './types.js'
 
 /**
@@ -69,6 +71,18 @@ export function isGenericDomain(domain: string, extra: readonly string[] = []): 
   return false
 }
 
+/**
+ * Whether a domain is itself a public suffix, such as `co.uk` or `github.io`, which many unrelated people can register
+ * under. Uses the Public Suffix List (ICANN and private sections) as shipped in the `tldts` package. A name under one,
+ * such as `zoo.co.uk`, is fine.
+ */
+export function isPublicSuffix(domain: string): boolean {
+  const d = normalizeDomain(domain)
+  if (!d) return false
+  const r = parse(d, { allowPrivateDomains: true })
+  return r.domain === null && r.publicSuffix === d
+}
+
 /** The domain and every parent with at least two labels: `a.b.zoo.org` gives `a.b.zoo.org`, `b.zoo.org`, `zoo.org`. */
 const withParents = (d: string) => {
   const labels = d.split('.')
@@ -80,17 +94,26 @@ const withParents = (d: string) => {
 export type DomainMatch = { id: string | number; name: string; kind: string; domain: string }
 
 /**
- * Organizations an email address suggests. This is a hint and nothing more: it never adds a membership or grants
- * anything, the host decides what to do with it, and a minor's address must not be passed in (a minor never joins an
- * organization). It finds only active organizations. Public mail, school and ISP domains match nothing. A kind listed
- * in `rorRequiredKinds` matches only once it has a ROR id. A listed domain also matches its subdomains. It reads
- * without access rules, so call it from server code and show the result only to the person it is about.
+ * Organizations a person's email address suggests. This is a hint and nothing more: it never adds a membership or
+ * grants anything, and the host decides what to do with it. It finds only active organizations, and only for a user
+ * whose email is verified (`_verified` is true, or the host passes `assumeVerified: true` when it has checked the
+ * address another way); otherwise it returns nothing, so an unverified address can't be used to list names. Each match
+ * is put through the host's veto (`refuseMember`, action `suggest`) and dropped silently if refused. Public mail, school
+ * and ISP domains match nothing. A kind in `rorRequiredKinds` matches only once it has a ROR id. A listed domain also
+ * matches every subdomain. It reads without access rules, so call it from server code and show the result only to the
+ * person it is about.
  */
-export async function matchOrganizations(from: Payload | Pick<PayloadRequest, 'payload'>, email: string): Promise<DomainMatch[]> {
+export async function matchOrganizations(
+  from: Payload | Pick<PayloadRequest, 'payload'>,
+  user: { id: string | number; email?: unknown; _verified?: unknown },
+  options: { assumeVerified?: boolean } = {},
+): Promise<DomainMatch[]> {
   const payload = 'payload' in from ? from.payload : from
   const s = settings({ payload })
-  const domain = domainOf(email)
-  if (!domain || isGenericDomain(domain, s.genericDomains)) return []
+  if (user._verified !== true && options.assumeVerified !== true) return []
+  const userId = idOf(user)
+  const domain = domainOf(user.email)
+  if (userId === null || !domain || isGenericDomain(domain, s.genericDomains)) return []
   const candidates = withParents(domain)
   const found = await payload.find({
     collection: ORGANIZATIONS as never,
@@ -99,11 +122,18 @@ export async function matchOrganizations(from: Payload | Pick<PayloadRequest, 'p
     depth: 0,
     overrideAccess: true,
   })
+  const req = 'payload' in from && 'context' in from ? (from as PayloadRequest) : await createLocalReq({}, payload)
   const out: DomainMatch[] = []
   for (const o of found.docs as unknown as { id: string | number; name: string; kind: string; rorId?: string | null; domains?: string[] }[]) {
     if (s.rorRequiredKinds.includes(o.kind) && !o.rorId) continue
     const hit = candidates.find((c) => (o.domains ?? []).includes(c))
-    if (hit) out.push({ id: o.id, name: o.name, kind: o.kind, domain: hit })
+    if (!hit) continue
+    try {
+      await vetoed(s, s.users, req, { id: o.id, name: o.name, kind: o.kind, status: 'active', rorId: o.rorId ?? null, domains: o.domains ?? [], createdBy: null }, userId, 'member', 'suggest')
+    } catch {
+      continue
+    }
+    out.push({ id: o.id, name: o.name, kind: o.kind, domain: hit })
   }
   return out
 }

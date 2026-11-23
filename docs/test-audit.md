@@ -2,7 +2,13 @@
 
 Kept by this repo's owning session, per `~/Code/CLAUDE.md`, "Test self-audits". Newest first.
 
-## 2026-11-22: first version (K5227)
+## 2026-11-23: after the review fixes
+
+- Promises added: no approving through a second account; the veto is not asked at invitation, so inviters see one answer; `refuseMember` is a function or exactly `false`; no start without transactions unless opted out; no bulk update or delete; public suffixes refused; matcher needs a verified email and runs the veto; the picker respects read access; history keeps values and one row per change.
+- Covered: each, in `test/members.test.ts`, `test/organizations.test.ts`, `test/doors.test.ts`, `test/plugin.test.ts` and the new `test/transactions.test.ts` (97 tests in all), including the exact second-account sequence.
+- Gaps skipped: the early-exit message for a stranger on a closed organization when the host's `canInvite` allows them (the host chose to allow it).
+
+## 2026-11-22: first version
 
 - Promises: organizations start pending and go live only when an approver activates the first Coordinator; nobody approves themselves or raises their own level; hooks fail closed (exact `true`); the veto applies to server code and on invite, accept, approve, level change and reopen; an organization always keeps a Coordinator, also under two changes at once; no duplicate live rows and no duplicate ROR ids; no deletes; closed organizations can't change; only approvers set ROR ids and domains; generic domains are refused; the matcher suggests and never grants, and finds only active organizations; private notes are hidden from members; the picker refuses inactive or wrong-kind organizations; a user from another sign-in collection is nobody.
 - Covered: each of those, in `test/*.test.ts` (77 tests), including refusals over REST, GraphQL and bulk update, server-code revive and widen attempts, plain ids to hooks, the history, and repeated two-at-once runs for the last-Coordinator, invite and ROR rules.

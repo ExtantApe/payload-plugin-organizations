@@ -52,12 +52,15 @@ describe('proposing an organization', () => {
     expect((await state.payload.count({ collection: 'organizations' as never, overrideAccess: true })).totalDocs).toBe(0)
   })
 
-  it('drops domains and a ROR id from a proposer who is not an approver, and keeps them for an approver', async () => {
+  it('drops domains and a ROR id from every proposer, approvers included, and keeps them for server code', async () => {
     const a = await propose(cy, { domains: ['made-up-zoo.org'], rorId: '02mhbdp94' })
     expect((await orgRow(a.id)).domains).toEqual([])
     expect((await orgRow(a.id)).rorId ?? null).toBeNull()
-    const b = await propose(ann, { name: 'Made-up Lab', kind: 'lab', domains: ['@Lab.Example.ORG', 'lab.example.org'], rorId: 'https://ror.org/02MHBDP94' })
-    const doc = await orgRow(b.id)
+    const b = await propose(ann, { name: 'Made-up Lab', kind: 'lab', domains: ['lab.example.org'], rorId: '02mhbdp94' })
+    expect((await orgRow(b.id)).domains).toEqual([])
+    expect((await orgRow(b.id)).rorId ?? null).toBeNull()
+    const c = (await state.payload.create({ collection: 'organizations' as never, data: { name: 'Server Lab', kind: 'lab', domains: ['@Lab.Example.ORG', 'lab.example.org'], rorId: 'https://ror.org/02MHBDP94' } as never, overrideAccess: true })) as unknown as { id: string }
+    const doc = await orgRow(c.id)
     expect(doc.domains).toEqual(['lab.example.org'])
     expect(doc.rorId).toBe('02mhbdp94')
   })
@@ -231,7 +234,7 @@ describe('what can change', () => {
     const a = await propose(ann, { name: 'A', kind: 'lab' })
     const b = await propose(ann, { name: 'B', kind: 'lab' })
     await propose(ann, { name: 'C', kind: 'lab' })
-    const results = await Promise.allSettled([editOrg(ann, a.id, { rorId: '03yrm5c26' }), editOrg(ann, b.id, { rorId: '03yrm5c26' })])
+    const results = await Promise.allSettled([editOrg(bea, a.id, { rorId: '03yrm5c26' }), editOrg(bea, b.id, { rorId: '03yrm5c26' })])
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1)
     expect((await state.payload.count({ collection: 'organizations' as never, where: { rorId: { equals: '03yrm5c26' } } as never, overrideAccess: true })).totalDocs).toBe(1)
   })
@@ -288,3 +291,92 @@ describe('the audit hooks', () => {
     expect((await orgRow(org.id)).status).toBe('pending')
   })
 })
+
+describe('widening by someone involved', () => {
+  it('stops an approver who made or belongs to an organization from changing its ROR id or domains', async () => {
+    const org = await liveOrg(cy, ann)
+    // Ann approved it, so she is not in it. Bea joins, then tries.
+    await join(org.id, cy, bea, 'viewer')
+    expect(await refused(editOrg(bea, org.id, { domains: ['made-up-zoo.org'] }))).toMatch(/made or belong to/)
+    expect(await refused(editOrg(bea, org.id, { rorId: '02mhbdp94' }))).toMatch(/made or belong to/)
+    expect((await orgRow(org.id)).domains).toEqual([])
+    // An approver who made an organization can't either.
+    answers.canPrecreate = () => false
+    const mine = await liveOrg(ann, bea, { name: 'Ann Made This' })
+    expect(await refused(editOrg(ann, mine.id, { domains: ['ann-zoo.org'] }))).toMatch(/made or belong to/)
+    await editOrg(bea, mine.id, { domains: ['ann-zoo.org'] }).catch(() => null)
+  })
+
+  it('refuses public suffixes, and accepts a name under one', async () => {
+    const org = await liveOrg(cy, ann)
+    for (const bad of ['co.uk', 'github.io', 'com.au', 'blogspot.com']) expect(await refused(editOrg(ann, org.id, { domains: [bad] }))).toMatch(/public suffix/)
+    await editOrg(ann, org.id, { domains: ['zoo.co.uk', 'me.github.io'] })
+    expect((await orgRow(org.id)).domains).toEqual(['me.github.io', 'zoo.co.uk'])
+  })
+
+  it('only checks domains being added, so a domain the host later marks generic does not block a rename or a close', async () => {
+    const org = await liveOrg(cy, ann)
+    await editOrg(ann, org.id, { domains: ['later-generic.example', 'kept.example'] })
+    const custom = (state.payload.config.custom as { organizations: { genericDomains: string[] } }).organizations
+    custom.genericDomains.push('later-generic.example')
+    try {
+      await editOrg(cy, org.id, { name: 'Renamed While Generic', domains: ['later-generic.example', 'kept.example'] })
+      expect((await orgRow(org.id)).name).toBe('Renamed While Generic')
+      expect(await refused(editOrg(ann, org.id, { domains: ['later-generic.example', 'kept.example', 'extra-mail.example'] }))).toMatch(/public mail/)
+      await editOrg(ann, org.id, { status: 'closed' })
+      expect((await orgRow(org.id)).status).toBe('closed')
+    } finally {
+      custom.genericDomains.pop()
+    }
+  })
+})
+
+describe('the history', () => {
+  it('records the domain and ROR values, and both events when one change does two things', async () => {
+    const org = await liveOrg(cy, ann)
+    await editOrg(ann, org.id, { domains: ['made-up-zoo.org'], rorId: '02mhbdp94' })
+    const dom = (await state.payload.find({ collection: 'organization-events' as never, where: { event: { equals: 'change-domains' } } as never, overrideAccess: true })).docs[0] as any
+    expect(dom.domains).toEqual(['made-up-zoo.org'])
+    expect(dom.rorId).toBe('02mhbdp94')
+    expect(dom.previousDomains ?? []).toEqual([])
+    log.length = 0
+    await editOrg(ann, org.id, { status: 'closed', domains: ['made-up-zoo.org', 'second.example.org'] })
+    const names = (await events()).map((e) => e.event)
+    expect(names.slice(-2)).toEqual(['close', 'change-domains'])
+    expect(log.filter((l) => l.startsWith('before:'))).toEqual(['before:close', 'before:change-domains'])
+    expect(log.filter((l) => l.startsWith('after:'))).toEqual(['after:close', 'after:change-domains'])
+    const last = (await state.payload.find({ collection: 'organization-events' as never, where: { event: { equals: 'change-domains' } } as never, sort: '-createdAt', limit: 1, overrideAccess: true })).docs[0] as any
+    expect(last.domains).toEqual(['made-up-zoo.org', 'second.example.org'])
+    expect(last.previousDomains).toEqual(['made-up-zoo.org'])
+  })
+
+  it('records a notes-only change as an update, with no private text in it', async () => {
+    const org = await liveOrg(cy, ann)
+    log.length = 0
+    await editOrg(ann, org.id, { privateNotes: 'staff only words' })
+    expect(log).toEqual(['before:update', 'after:update'])
+    const all = await events()
+    expect(all[all.length - 1]!.event).toBe('update')
+    const flat = await state.payload.find({ collection: 'organization-events' as never, depth: 0, pagination: false, overrideAccess: true })
+    expect(JSON.stringify(flat.docs)).not.toMatch(/staff only words/)
+  })
+})
+
+describe('changing one document at a time', () => {
+  it('refuses a bulk update or delete, even from server code, and leaves every document as it was', async () => {
+    const other = await liveOrg(eli, ann, { name: 'Other Zoo' })
+    for (const collection of ['organizations', 'organization-members', 'organization-events']) {
+      expect(await refused(state.payload.update({ collection: collection as never, where: { id: { exists: true } } as never, data: { name: 'Hacked' } as never, overrideAccess: true }))).toMatch(/one document at a time/)
+      expect(await refused(state.payload.delete({ collection: collection as never, where: { id: { exists: true } } as never, overrideAccess: true }))).toMatch(/one document at a time/)
+    }
+    expect((await orgRow(other.id)).name).toBe('Other Zoo')
+    expect(await count('organizations')).toBe(1)
+    expect(await count('organization-members')).toBe(1)
+  })
+
+  it('still refuses a delete by id from server code', async () => {
+    expect(await refused(state.payload.delete({ collection: 'organizations' as never, id: (await liveOrg(eli, ann, { name: 'X' })).id as never, overrideAccess: true }))).toMatch(/never deleted/)
+  })
+})
+
+const count = async (collection: string) => (await state.payload.count({ collection: collection as never, overrideAccess: true })).totalDocs

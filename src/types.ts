@@ -44,6 +44,7 @@ export type Resolved = {
   kinds: KindConfig[]
   rorRequiredKinds: string[]
   genericDomains: string[]
+  refuseMember: RefuseMember | false
 }
 
 type User = { id: string | number; collection?: string } & Record<string, unknown>
@@ -83,7 +84,7 @@ export type RefuseArgs = {
   subject: Record<string, unknown> & { id: string | number }
   userId: string | number
   level: Level
-  action: 'invite' | 'accept' | 'approve' | 'change-level' | 'reopen'
+  action: 'invite' | 'accept' | 'approve' | 'change-level' | 'reopen' | 'suggest'
 }
 export type RefuseMember = (args: RefuseArgs) => string | null | undefined | Promise<string | null | undefined>
 
@@ -147,12 +148,23 @@ export type OrganizationsOptions = {
   /** Who may read every organization, membership and history row, such as staff. Only an exact `true`. Default: nobody. */
   canRead?: (args: { req: PayloadRequest; user: User }) => boolean | Promise<boolean>
   /**
-   * A veto the host controls, asked on every invitation, acceptance, approval, level change and reopening, even for
-   * server code that skips access. Return `null` or nothing to go ahead, or a reason to refuse. A throw, `false` or
-   * anything else refuses with a general reason. The reason is shown to whoever was refused, so never give one that
-   * reveals something private, such as an age. Required: pass `false` to say plainly that the host has no veto.
+   * A veto the host controls, asked on every acceptance, approval, level change and reopening, and by
+   * `matchOrganizations`, even for server code that skips access. When one user invites another it is not asked, so an
+   * inviter can't learn from a refusal which accounts the veto covers; the invited person is refused when they accept.
+   * It is asked at invitation only when nobody else can read the answer: server code, or a person inviting themselves
+   * (the maker of an organization).
+   * Return `null` or nothing to go ahead, or a reason to refuse. A throw, `false` or anything else refuses with a
+   * general reason. The reason is shown to whoever was refused, so never give one that reveals something private, such
+   * as an age. Required: a function, or exactly `false` to say plainly that the host has no veto. Anything else
+   * (`null`, `0`, an empty string, `true`) throws when the plugin is set up.
    */
   refuseMember: RefuseMember | false
+  /**
+   * The plugin checks at start-up that the database can run transactions, because the last-Coordinator guard, the
+   * history rows and the picker depend on them, and refuses to start without. Pass `true` only for a database you know
+   * is not used by more than one writer at a time. Default false.
+   */
+  allowWithoutTransactions?: boolean
   /** Audit hooks for every event. A `before` hook that throws stops the change. An `after` hook that throws is logged and ignored. */
   audit?: { before?: AuditHook; after?: AuditHook }
   /** The admin group the collections sit in. Default `Organizations`. */

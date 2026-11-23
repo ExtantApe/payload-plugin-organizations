@@ -1,7 +1,7 @@
 import type { PayloadRequest } from 'payload'
 
 import { idOf, refuse } from './helpers.js'
-import { MEMBERS, ORGANIZATIONS, type Level, type Organization, type OrganizationsOptions, type RefuseArgs } from './types.js'
+import { MEMBERS, ORGANIZATIONS, type Level, type Organization, type RefuseArgs, type RefuseMember } from './types.js'
 
 export const GENERAL = 'This person can’t be added to this organization.'
 
@@ -14,8 +14,10 @@ export async function loadOrganization(req: PayloadRequest, id: unknown, orgOf: 
 }
 
 /** The host's veto. Only `null` or nothing goes ahead. Anything else, including a throw, refuses. */
-export async function vetoed(opts: OrganizationsOptions, users: string, req: PayloadRequest, organization: Organization & { id: string | number }, userId: string | number, level: Level, action: RefuseArgs['action']) {
-  if (!opts.refuseMember) return
+export async function vetoed(opts: { refuseMember: RefuseMember | false }, users: string, req: PayloadRequest, organization: Organization & { id: string | number }, userId: string | number, level: Level, action: RefuseArgs['action']) {
+  if (opts.refuseMember === false) return
+  // Only a function or exactly false is a valid setting; anything else that got past the config check refuses.
+  if (typeof opts.refuseMember !== 'function') throw refuse(GENERAL)
   const subject = await req.payload.findByID({ collection: users as never, id: userId, depth: 0, overrideAccess: true, req }).catch(() => null)
   if (!subject) throw refuse(GENERAL)
   let why: unknown

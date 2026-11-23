@@ -1,6 +1,6 @@
 import type { CollectionConfig, PayloadRequest, Where } from 'payload'
 
-import { emit, note, orgOf } from './organizations.js'
+import { emit, involved, noBulk, note, orgOf } from './organizations.js'
 import { asInternal, exactlyTrue, heldBy, idOf, isInternal, levelIn, levelOf, refuse, signedIn } from './helpers.js'
 import { GENERAL, loadOrganization, vetoed } from './veto.js'
 import { EVENTS, LEVELS, MEMBERS, ORGANIZATIONS, RANK, type Level, type MemberArgs, type Membership, type MemberStatus, type OrganizationsOptions, type Resolved } from './types.js'
@@ -44,14 +44,14 @@ export function membersCollection(s: Resolved, opts: OrganizationsOptions): Coll
   }
 
   /** Whether an approver (the host's `canApprove`) allows this, asked about the organization as it stands. */
-  const approves = async (req: PayloadRequest, id: string | number, data: Partial<Membership>) => {
+  const approves = async (req: PayloadRequest, id: string | number, level: Level) => {
     const user = signedIn(req, s)
     if (!user || !opts.canApprove) return false
     try {
       const organization = await loadOrganization(req, id, orgOf)
       if (!organization) return false
       const actorLevel = await levelIn(req, id).catch(() => null)
-      return await exactlyTrue(() => opts.canApprove!({ req, user, id, organization, data: data as never, actorLevel }))
+      return await exactlyTrue(() => opts.canApprove!({ req, user, id, organization, data: (level === 'coordinator' ? { status: 'active' } : {}) as never, actorLevel }))
     } catch {
       return false
     }
@@ -139,6 +139,7 @@ export function membersCollection(s: Resolved, opts: OrganizationsOptions): Coll
       { name: 'liveKey', type: 'text', unique: true, index: true, hidden: true, admin: { disabled: true } },
     ],
     hooks: {
+      beforeOperation: [noBulk],
       beforeDelete: [
         () => {
           throw refuse('Memberships are never deleted. Set the status to Removed.')
@@ -153,6 +154,8 @@ export function membersCollection(s: Resolved, opts: OrganizationsOptions): Coll
 
           if (operation === 'create') {
             const d = plain(data)
+            // The host's rule comes first, so someone who may not invite learns nothing about the organization, not even that it exists or is closed.
+            if (!trusted && !(await ask(opts.canInvite, req, d, { data: d }))) throw refuse('You can’t invite people to this organization.')
             const organization = await loadOrganization(req, d.organization, orgOf)
             if (!organization) throw refuse('Unknown organization.')
             if (organization.status === 'closed') throw refuse('This organization is closed.')
@@ -160,7 +163,6 @@ export function membersCollection(s: Resolved, opts: OrganizationsOptions): Coll
             if (userId === null) throw refuse('Unknown person.')
             const level = levelOf(d.level)
             if (!level) throw refuse('Unknown level.')
-            if (!trusted && !(await ask(opts.canInvite, req, d, { data: d }))) throw refuse('You can’t invite people to this organization.')
             data.organization = organization.id
             data.user = userId
             data.status = 'invited'
@@ -178,7 +180,10 @@ export function membersCollection(s: Resolved, opts: OrganizationsOptions): Coll
               req,
             })
             if (dup.docs.length) throw refuse('That person is already in this organization.')
-            await vetoed(opts, s.users, req, organization, userId, level, 'invite')
+            const subject = await req.payload.count({ collection: s.users as never, where: { id: { equals: userId } } as never, overrideAccess: true, req })
+            if (!subject.totalDocs) throw refuse('Unknown person.')
+            // The veto runs when the person accepts, so an inviter sees the same answer for every account. It is asked now only when the person invites themselves (the maker of an organization) or server code does, where nobody else can read the answer.
+            if (trusted || (me !== null && String(me.id) === String(userId))) await vetoed(opts, s.users, req, organization, userId, level, 'invite')
             // The database's unique index on this key is what stops two requests at once.
             data.liveKey = JSON.stringify([organization.id, userId])
             await emit(req, opts.audit?.before, { event: 'invite', phase: 'before', organization, membership: normalize(data), by: by(req) }, true)
@@ -234,7 +239,9 @@ export function membersCollection(s: Resolved, opts: OrganizationsOptions): Coll
             if (!trusted) {
               if (pending) {
                 if (self) throw refuse('Nobody approves themselves.')
-                if (!(await approves(req, organization.id, sent))) throw refuse('Only an approver can activate someone in a pending organization.')
+                if (!(await approves(req, organization.id, level))) throw refuse('Only an approver can activate someone in a pending organization.')
+                // Nobody activates someone in an organization they made or belong to, or they could approve it through a second account.
+                if (await involved(req, organization.id, organization.createdBy)) throw refuse('You can’t approve an organization you made or belong to.')
               } else if (!self) throw refuse('A person accepts their own invitation.')
             }
             data.acceptedAt = now
@@ -317,9 +324,14 @@ export function eventsCollection(s: Resolved, opts: OrganizationsOptions): Colle
       { name: 'previousLevel', type: 'text', maxLength: 40 },
       { name: 'status', type: 'text', maxLength: 40 },
       { name: 'previousStatus', type: 'text', maxLength: 40 },
+      { name: 'rorId', type: 'text', maxLength: 40 },
+      { name: 'previousRorId', type: 'text', maxLength: 40 },
+      { name: 'domains', type: 'text', hasMany: true },
+      { name: 'previousDomains', type: 'text', hasMany: true },
       { name: 'by', type: 'relationship', relationTo: s.users },
     ],
     hooks: {
+      beforeOperation: [noBulk],
       beforeDelete: [stop('deleted')],
       beforeChange: [
         ({ operation, data }) => {

@@ -8,9 +8,11 @@ import { answers, as, call, change, editOrg, invite, join, liveOrg, make, orgRow
 
 /** Written out so the leak check sees no address in the file. */
 const AT = '@'
+const mm = (email: string, extra: Record<string, unknown> = {}, assumeVerified?: boolean) => matchOrganizations(state.payload, { id: dee.id, email, _verified: true, ...extra }, { assumeVerified })
 
 let ann: U, bea: U, cy: U, dee: U, eli: U, fay: U
 let org: { id: string | number }
+let kid: U
 
 beforeAll(start, 180_000)
 afterAll(stop)
@@ -23,6 +25,7 @@ beforeEach(async () => {
   dee = await make('dee@example.com')
   eli = await make('eli@example.com')
   fay = await make('fay@example.com')
+  kid = await make('kid@example.com', { minor: true })
   org = await liveOrg(cy, ann)
 })
 
@@ -123,45 +126,45 @@ describe('the domain hint', () => {
 
   it('suggests an active organization from its domain and its subdomains, and grants nothing', async () => {
     await set(org.id, { domains: ['made-up-zoo.org'] })
-    const hit = await matchOrganizations(state.payload, `dee${AT}made-up-zoo.org`)
+    const hit = await mm(`dee${AT}made-up-zoo.org`)
     expect(hit).toEqual([expect.objectContaining({ id: org.id, name: 'Made-up Zoo', kind: 'zoo', domain: 'made-up-zoo.org' })])
-    expect((await matchOrganizations({ payload: state.payload }, `DEE${AT}Mail.Made-Up-Zoo.org`)).map((m) => m.domain)).toEqual(['made-up-zoo.org'])
-    expect(await matchOrganizations(state.payload, `dee${AT}notmade-up-zoo.org`)).toEqual([])
-    expect(await matchOrganizations(state.payload, `dee${AT}made-up-zoo.org.evil.example`)).toEqual([])
+    expect((await mm(`DEE${AT}Mail.Made-Up-Zoo.org`)).map((m) => m.domain)).toEqual(['made-up-zoo.org'])
+    expect(await mm(`dee${AT}notmade-up-zoo.org`)).toEqual([])
+    expect(await mm(`dee${AT}made-up-zoo.org.evil.example`)).toEqual([])
     expect((await rows({ user: { equals: dee.id } })).totalDocs).toBe(0)
   })
 
   it('suggests nothing for an address that is not one, public mail, a school or a provider', async () => {
     await set(org.id, { domains: ['made-up-zoo.org'] })
     for (const email of ['', 'no-at-sign', `dee${AT}`, `${AT}made-up-zoo.org`, `dee${AT}gmail.com`, `dee${AT}x.k12.tx.us`, `dee${AT}box.sample-isp.test`, `dee${AT}extra-mail.example`]) {
-      expect(await matchOrganizations(state.payload, email)).toEqual([])
+      expect(await mm(email)).toEqual([])
     }
   })
 
   it('ignores pending and closed organizations', async () => {
     const pending = await propose(ann, { name: 'Pending Lab', kind: 'lab', domains: ['pending-lab.org'] })
-    expect(await matchOrganizations(state.payload, `x${AT}pending-lab.org`)).toEqual([])
+    expect(await mm(`x${AT}pending-lab.org`)).toEqual([])
     const other = await liveOrg(fay, ann, { name: 'Live Lab', kind: 'lab' })
     await set(other.id, { domains: ['live-lab.org'] })
-    expect((await matchOrganizations(state.payload, `x${AT}live-lab.org`)).length).toBe(1)
+    expect((await mm(`x${AT}live-lab.org`)).length).toBe(1)
     await editOrg(bea, other.id, { status: 'closed' })
-    expect(await matchOrganizations(state.payload, `x${AT}live-lab.org`)).toEqual([])
+    expect(await mm(`x${AT}live-lab.org`)).toEqual([])
     expect((await orgRow(pending.id)).status).toBe('pending')
   })
 
   it('groups a university only once staff set it up from ROR', async () => {
     const uni = await liveOrg(fay, ann, { name: 'Made-up University', kind: 'university' })
     await set(uni.id, { domains: ['made-up.edu.example'] })
-    expect(await matchOrganizations(state.payload, `x${AT}made-up.edu.example`)).toEqual([])
+    expect(await mm(`x${AT}made-up.edu.example`)).toEqual([])
     await set(uni.id, { rorId: '02mhbdp94' })
-    expect((await matchOrganizations(state.payload, `x${AT}made-up.edu.example`)).map((m) => m.name)).toEqual(['Made-up University'])
+    expect((await mm(`x${AT}made-up.edu.example`)).map((m) => m.name)).toEqual(['Made-up University'])
   })
 
   it('returns every organization that lists a shared domain', async () => {
     await set(org.id, { domains: ['shared.example.org'] })
     const sister = await liveOrg(fay, ann, { name: 'Sister Lab', kind: 'lab' })
     await set(sister.id, { domains: ['shared.example.org'] })
-    expect((await matchOrganizations(state.payload, `x${AT}shared.example.org`)).map((m) => m.name).sort()).toEqual(['Made-up Zoo', 'Sister Lab'])
+    expect((await mm(`x${AT}shared.example.org`)).map((m) => m.name).sort()).toEqual(['Made-up Zoo', 'Sister Lab'])
   })
 
   it('has no route that exposes it', async () => {
@@ -171,9 +174,36 @@ describe('the domain hint', () => {
   })
 })
 
+const place = (user: U | null, data: Record<string, unknown>) =>
+  state.payload.create({ collection: 'places' as never, data: { title: 'Pond', ...data } as never, user: user ? as(user) : undefined, overrideAccess: false }) as unknown as Promise<{ id: string | number }>
+
+describe('the domain hint, for a person', () => {
+  it('lists nothing before the email is verified, unless the host says it has checked', async () => {
+    await editOrg(ann, org.id, { domains: ['made-up-zoo.org'] })
+    expect(await mm(`dee${AT}made-up-zoo.org`, { _verified: false })).toEqual([])
+    expect(await mm(`dee${AT}made-up-zoo.org`, { _verified: undefined })).toEqual([])
+    expect(await mm(`dee${AT}made-up-zoo.org`, { _verified: 'true' })).toEqual([])
+    expect((await mm(`dee${AT}made-up-zoo.org`, { _verified: undefined }, true)).length).toBe(1)
+  })
+
+  it('runs the host’s veto itself and drops an organization it refuses, without saying why', async () => {
+    await editOrg(ann, org.id, { domains: ['made-up-zoo.org'] })
+    expect(await matchOrganizations(state.payload, { id: kid.id, email: `kid${AT}made-up-zoo.org`, _verified: true })).toEqual([])
+    expect((await matchOrganizations(state.payload, { id: dee.id, email: `dee${AT}made-up-zoo.org`, _verified: true })).length).toBe(1)
+  })
+})
+
 describe('the picker field', () => {
-  const place = (user: U | null, data: Record<string, unknown>) =>
-    state.payload.create({ collection: 'places' as never, data: { title: 'Pond' , ...data } as never, user: user ? as(user) : undefined, overrideAccess: false }) as unknown as Promise<{ id: string | number }>
+  it('refuses an organization the editor can’t read, in the same words as an inactive one', async () => {
+    const stranger = await refused(place(dee, { organization: org.id }))
+    const missing = await refused(place(dee, { organization: '000000000000000000000000' }))
+    expect(stranger).toMatch(/invalid/)
+    expect(stranger).toBe(missing)
+    await place(cy, { organization: org.id })
+    await place(null, { organization: org.id }).catch(() => null)
+    // Server code that skips access can attach any active organization.
+    await state.payload.create({ collection: 'places' as never, data: { title: 'Server', organization: org.id } as never, overrideAccess: true })
+  })
 
   it('accepts an active organization and refuses a pending, closed or unknown one', async () => {
     await place(cy, { organization: org.id })
@@ -188,9 +218,9 @@ describe('the picker field', () => {
   it('checks the kind, and lets an organization already chosen stay after it closes', async () => {
     expect(await refused(place(cy, { lab: org.id }))).toMatch(/invalid/)
     const lab = await liveOrg(fay, ann, { name: 'Made-up Lab', kind: 'lab' })
-    const p = await place(cy, { lab: lab.id, title: 'Bench' })
+    const p = await place(fay, { lab: lab.id, title: 'Bench' })
     await editOrg(bea, lab.id, { status: 'closed' })
-    await state.payload.update({ collection: 'places' as never, id: p.id as never, data: { title: 'Bench 2' } as never, user: as(cy), overrideAccess: false })
+    await state.payload.update({ collection: 'places' as never, id: p.id as never, data: { title: 'Bench 2' } as never, user: as(fay), overrideAccess: false })
     expect(await refused(state.payload.update({ collection: 'places' as never, id: p.id as never, data: { lab: org.id } as never, overrideAccess: true }))).toMatch(/invalid/)
   })
 

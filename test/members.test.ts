@@ -96,9 +96,30 @@ describe('inviting', () => {
 
 describe('the veto', () => {
   it('stops a minor on invite, even for server code that skips access', async () => {
-    expect(await refused(invite(cy, org.id, { user: kid.id, level: 'viewer' }))).toMatch(/Not available for this account/)
     expect(await refused(state.payload.create({ collection: 'organization-members' as never, data: { organization: org.id, user: kid.id, level: 'viewer' } as never, overrideAccess: true }) as Promise<unknown>)).toMatch(/Not available/)
     expect((await rows({ user: { equals: kid.id } })).totalDocs).toBe(0)
+  })
+
+  it('looks the same to the inviter for a minor and anyone else, and refuses the minor on accept', async () => {
+    log.length = 0
+    const a = await invite(cy, org.id, { user: kid.id, level: 'viewer' })
+    const b = await invite(cy, org.id, { user: dee.id, level: 'viewer' })
+    expect(log).not.toContain('veto:invite')
+    const shape = (r: Record<string, any>) => ({ keys: Object.keys(r).sort(), level: r.level, status: r.status, invitedBy: String(r.invitedBy?.id ?? r.invitedBy) })
+    expect(shape(a)).toEqual(shape(b))
+    expect((await events()).filter((e) => e.event === 'invite').map((e) => [e.level, e.status])).toEqual([['coordinator', 'invited'], ['viewer', 'invited'], ['viewer', 'invited']])
+    // The inviter's own reads show nothing that tells the two apart.
+    const seenBy = async () => (await state.payload.find({ collection: 'organization-members' as never, where: { user: { in: [kid.id, dee.id] } } as never, user: as(cy), overrideAccess: false, pagination: false })).docs.map((d: any) => [d.level, d.status])
+    expect(await seenBy()).toEqual([['viewer', 'invited'], ['viewer', 'invited']])
+    // The refusal reaches the invited person, and the row stays invited.
+    expect(await refused(change(kid, (await rowOf(org.id, kid)).id, { status: 'active' }))).toMatch(/Not available for this account/)
+    expect((await rowOf(org.id, kid)).status).toBe('invited')
+    await change(dee, (await rowOf(org.id, dee)).id, { status: 'active' })
+  })
+
+  it('refuses a minor who invites themselves, since only they can read the answer', async () => {
+    answers.canInvite = () => true
+    expect(await refused(invite(kid, org.id, { user: kid.id, level: 'viewer' }))).toMatch(/Not available/)
   })
 
   it('is asked again on accept and on a level change, and stops them', async () => {
@@ -118,7 +139,8 @@ describe('the veto', () => {
   it('refuses on a throw, on false and on a blank reason, with a general message', async () => {
     for (const answer of [() => { throw new Error('secret reason') }, () => false, () => '  ', () => 0]) {
       answers.refuse = answer
-      const msg = await refused(invite(cy, org.id, { user: dee.id, level: 'member' }))
+      const row = (await rowOf(org.id, dee)) ?? (await invite(cy, org.id, { user: dee.id, level: 'member' }))
+      const msg = await refused(change(dee, row.id, { status: 'active' }))
       expect(msg).toMatch(/can’t be added to this organization/)
       expect(msg).not.toMatch(/secret/)
     }
@@ -354,5 +376,59 @@ describe('the helpers', () => {
     expect((await organizationsOf(reqFor(dee), { atLeast: 'coordinator' })).map((o) => String(o.id))).toEqual([String(second.id)])
     expect(await organizationsOf(reqFor(eli))).toEqual([])
     expect(await organizationsOf(reqFor(null))).toEqual([])
+  })
+})
+
+describe('approving through a second account', () => {
+  it('stops an approver who made an organization from activating it by approving an invited Coordinator', async () => {
+    // Nobody is left in the organization but the approver and the person the approver invites.
+    answers.canPrecreate = () => false
+    const pend = await propose(ann, { name: 'Second Account Zoo' })
+    await invite(ann, pend.id, { user: dee.id, level: 'coordinator' })
+    const bRow = await rowOf(pend.id, dee)
+    expect(await refused(change(ann, bRow.id, { status: 'active' }))).toMatch(/made or belong to/)
+    expect((await orgRow(pend.id)).status).toBe('pending')
+    expect((await rowOf(pend.id, dee)).status).toBe('invited')
+    // The same holds once the approver has only been invited, never accepted.
+    expect(await refused(change(ann, (await rowOf(pend.id, ann)).id, { status: 'active' }))).toMatch(/themselves/)
+    // Dee cannot be used to bring the approver back in either: nothing is active, so Dee has no say.
+    expect(await refused(invite(dee, pend.id, { user: ann.id, level: 'coordinator' }))).toBeTruthy()
+    expect((await orgRow(pend.id)).status).toBe('pending')
+    // A different approver can still approve.
+    await change(bea, bRow.id, { status: 'active' })
+    expect((await orgRow(pend.id)).status).toBe('active')
+  })
+
+  it('stops an approver who belongs to a pending organization from approving anyone in it', async () => {
+    answers.canPrecreate = () => false
+    answers.canInvite = () => true
+    const pend = await propose(cy, { name: 'Member Approver Zoo' })
+    await invite(cy, pend.id, { user: ann.id, level: 'member' })
+    expect(await refused(change(ann, (await rowOf(pend.id, cy)).id, { status: 'active' }))).toMatch(/made or belong to/)
+    expect((await orgRow(pend.id)).status).toBe('pending')
+  })
+
+  it('asks canApprove about the organization on this path, not about membership fields', async () => {
+    answers.canPrecreate = () => false
+    const pend = await propose(cy, { name: 'Shape Zoo' })
+    let got: any
+    answers.canApprove = (a: any) => {
+      got = a
+      return true
+    }
+    await change(ann, (await rowOf(pend.id, cy)).id, { status: 'active' })
+    expect(got.data).toEqual({ status: 'active' })
+    expect(got.organization.name).toBe('Shape Zoo')
+  })
+})
+
+describe('who may ask about an organization', () => {
+  it('gives a stranger the same answer for a live, closed and missing organization', async () => {
+    const closed = await liveOrg(fay, ann, { name: 'Closed One' })
+    await editOrg(bea, closed.id, { status: 'closed' })
+    const asked = [org.id, closed.id, '000000000000000000000000'].map((id) => invite(eli, id, { user: dee.id, level: 'viewer' }))
+    const msgs = await Promise.all(asked.map((p) => refused(p)))
+    expect(new Set(msgs).size).toBe(1)
+    expect(msgs[0]).toMatch(/can’t invite/)
   })
 })

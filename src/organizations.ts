@@ -1,6 +1,6 @@
 import type { CollectionConfig, PayloadRequest } from 'payload'
 
-import { isGenericDomain, normalizeDomain } from './domains.js'
+import { isGenericDomain, isPublicSuffix, normalizeDomain } from './domains.js'
 import { vetoed } from './veto.js'
 import { asInternal, exactlyTrue, idOf, isInternal, levelIn, refuse, signedIn } from './helpers.js'
 import {
@@ -41,8 +41,14 @@ export function normalizeRor(input: unknown): string | null {
   return ROR.test(m) ? m : null
 }
 
-const eventFor = (before: Organization, next: Organization): EventName =>
-  next.status !== before.status ? (next.status === 'active' ? (before.status === 'closed' ? 'reopen' : 'activate') : 'close') : next.rorId !== before.rorId || !same(next.domains, before.domains) ? 'change-domains' : 'update'
+/** Every event one change amounts to: a status change, a change of ROR id or domains, and a rename or notes change can all happen at once. */
+export const eventsFor = (before: Organization, next: Organization, notesChanged: boolean): EventName[] => {
+  const out: EventName[] = []
+  if (next.status !== before.status) out.push(next.status === 'active' ? (before.status === 'closed' ? 'reopen' : 'activate') : 'close')
+  if (next.rorId !== before.rorId || !same(next.domains, before.domains)) out.push('change-domains')
+  if (next.name !== before.name || notesChanged) out.push('update')
+  return out
+}
 
 const same = (a: string[], b: string[]) => a.length === b.length && a.every((d, i) => d === b[i])
 
@@ -59,7 +65,19 @@ export async function emit(req: PayloadRequest, hook: ((e: AuditEvent) => void |
 /** One history row, written in the same transaction, so a change without its record is rolled back. */
 export async function note(
   req: PayloadRequest,
-  row: { organization: string | number; event: EventName; memberId?: string | number | null; level?: string | null; previousLevel?: string | null; status?: string | null; previousStatus?: string | null },
+  row: {
+    organization: string | number
+    event: EventName
+    memberId?: string | number | null
+    level?: string | null
+    previousLevel?: string | null
+    status?: string | null
+    previousStatus?: string | null
+    rorId?: string | null
+    previousRorId?: string | null
+    domains?: string[]
+    previousDomains?: string[]
+  },
 ) {
   await req.payload.create({
     collection: EVENTS as never,
@@ -67,6 +85,27 @@ export async function note(
     overrideAccess: true,
     req,
   })
+}
+
+/** Whether the asker made this organization, or is, or is waiting to become, a member of it. Nobody approves their own. */
+export async function involved(req: PayloadRequest, id: string | number, createdBy: unknown) {
+  const me = idOf(req.user)
+  if (me === null) return false
+  if (String(idOf(createdBy)) === String(me)) return true
+  const rows = await req.payload.count({
+    collection: MEMBERS as never,
+    where: { and: [{ organization: { equals: id } }, { user: { equals: me } }, { status: { in: ['invited', 'active'] } }] } as never,
+    overrideAccess: true,
+    req,
+  })
+  return rows.totalDocs > 0
+}
+
+/** Bulk changes commit a document whose later hook threw, so the plugin's collections only change one document at a time. */
+export const noBulk = ({ operation, args }: { operation: string; args: unknown }) => {
+  const a = args as { where?: unknown; id?: unknown }
+  if ((operation === 'update' || operation === 'delete') && a.where !== undefined && a.where !== null && (a.id === undefined || a.id === null)) throw refuse('Change one document at a time. Bulk changes aren’t allowed here.')
+  return args as never
 }
 
 export function organizationsCollection(s: Resolved, opts: OrganizationsOptions): CollectionConfig {
@@ -83,27 +122,17 @@ export function organizationsCollection(s: Resolved, opts: OrganizationsOptions)
     }
   }
 
-  /** Whether the asker is, or is waiting to become, a member of this organization. Nobody approves their own. */
-  const involved = async (req: PayloadRequest, id: string | number, createdBy: unknown) => {
-    const me = idOf(req.user)
-    if (me === null) return false
-    if (String(idOf(createdBy)) === String(me)) return true
-    const rows = await req.payload.count({
-      collection: MEMBERS as never,
-      where: { and: [{ organization: { equals: id } }, { user: { equals: me } }, { status: { in: ['invited', 'active'] } }] } as never,
-      overrideAccess: true,
-      req,
-    })
-    return rows.totalDocs > 0
-  }
-
-  const cleanDomains = (raw: unknown): string[] => {
+  /** Domains already on the organization stay, even if the host has since marked one generic, so renames and closing keep working. Only added ones are checked. */
+  const cleanDomains = (raw: unknown, existing: string[] = []): string[] => {
     const list = Array.isArray(raw) ? raw : []
     const out: string[] = []
     for (const item of list) {
       const d = normalizeDomain(typeof item === 'object' && item !== null ? (item as { domain?: unknown }).domain : item)
       if (!d) throw refuse('One of the domains isn’t a valid domain.')
-      if (isGenericDomain(d, s.genericDomains)) throw refuse('A public mail, school or internet provider domain can’t be put on an organization.')
+      if (!existing.includes(d)) {
+        if (isGenericDomain(d, s.genericDomains)) throw refuse('A public mail, school or internet provider domain can’t be put on an organization.')
+        if (isPublicSuffix(d)) throw refuse('A public suffix such as co.uk or github.io can’t be put on an organization.')
+      }
       if (!out.includes(d)) out.push(d)
     }
     if (out.length > DOMAINS_MAX) throw refuse(`An organization can list at most ${DOMAINS_MAX} domains.`)
@@ -213,6 +242,7 @@ export function organizationsCollection(s: Resolved, opts: OrganizationsOptions)
       { name: 'lock', type: 'number', hidden: true, admin: { disabled: true }, access: { create: () => false, update: () => false } },
     ],
     hooks: {
+      beforeOperation: [noBulk],
       // Nothing is ever deleted, not even by server code that skips access.
       beforeDelete: [
         () => {
@@ -230,8 +260,8 @@ export function organizationsCollection(s: Resolved, opts: OrganizationsOptions)
             if (!s.kinds.some((k) => k.value === data.kind)) throw refuse('Unknown kind of organization.')
             const wanted = { name, kind: data.kind as string, status: 'pending' as const, rorId: normalizeRor(data.rorId), domains: cleanDomains(data.domains) }
             if (!trusted && !(await ask(opts.canCreate, req, wanted, wanted))) throw refuse('You can’t add an organization.')
-            // Domains and a ROR id widen who an organization suggests, so only an approver sets them, and a pending one has none until then.
-            const approver = trusted || (await ask(opts.canApprove, req, wanted, wanted))
+            // Domains and a ROR id widen who an organization suggests, so only an approver who didn't make it sets them, and a pending one has none until then. The maker made it, so only server code keeps them.
+            const approver = trusted
             data.name = name
             data.status = 'pending'
             data.createdBy = by(req)
@@ -257,7 +287,7 @@ export function organizationsCollection(s: Resolved, opts: OrganizationsOptions)
             status: ('status' in sent ? sent.status : before.status) as OrganizationStatus,
             // Payload hands over the whole document, so an absent or undefined value means unchanged. Only an explicit null or blank clears.
             rorId: sent.rorId === undefined ? before.rorId : sent.rorId === null || sent.rorId === '' ? null : normalizeRor(sent.rorId),
-            domains: 'domains' in sent ? cleanDomains(sent.domains) : before.domains,
+            domains: 'domains' in sent ? cleanDomains(sent.domains, before.domains) : before.domains,
           }
           if (sent.rorId !== undefined && sent.rorId !== null && sent.rorId !== '' && next.rorId === null) throw refuse('That isn’t a ROR id.')
           if (!STATUSES.includes(next.status)) throw refuse('Unknown status.')
@@ -271,13 +301,15 @@ export function organizationsCollection(s: Resolved, opts: OrganizationsOptions)
           const patch = { ...next }
           if (!trusted) {
             if ((nameChanged || notesChanged) && !(await ask(opts.canUpdate, req, before, patch, id))) throw refuse('You can’t change this organization.')
-            if ((widened || statusChanged) && !(await ask(opts.canApprove, req, before, patch, id))) throw refuse('Only an approver can do that.')
+            if (widened || statusChanged) {
+              if (!(await ask(opts.canApprove, req, before, patch, id))) throw refuse('Only an approver can do that.')
+              // Nobody approves, reopens, closes or widens an organization they made or belong to.
+              if (await involved(req, id, before.createdBy)) throw refuse('You can’t approve an organization you made or belong to.')
+            }
           }
           if (statusChanged) {
             const ok = (before.status === 'pending' && (next.status === 'active' || next.status === 'closed')) || (before.status === 'active' && next.status === 'closed') || (before.status === 'closed' && next.status === 'active')
             if (!ok) throw refuse('That status change isn’t allowed.')
-            // Nobody approves, reopens or closes an organization they made or belong to.
-            if (!trusted && (await involved(req, id, before.createdBy))) throw refuse('You can’t approve an organization you made or belong to.')
           }
           if (nameChanged) data.name = next.name
           if (sent.rorId !== undefined) {
@@ -286,7 +318,9 @@ export function organizationsCollection(s: Resolved, opts: OrganizationsOptions)
             else data.rorId = next.rorId
           }
           if ('domains' in sent) data.domains = next.domains
-          await emit(req, opts.audit?.before, { event: eventFor(before, next), phase: 'before', organization: args, previous: before, by: by(req) }, true)
+          const found = eventsFor(before, next, notesChanged)
+          for (const event of found) await emit(req, opts.audit?.before, { event, phase: 'before', organization: args, previous: before, by: by(req) }, true)
+          if (notesChanged) req.context[`organizations:${String(id)}`] = { notes: true }
           return data
         },
       ],
@@ -295,7 +329,7 @@ export function organizationsCollection(s: Resolved, opts: OrganizationsOptions)
           const organization = orgOf(doc)
           const id = doc.id as string | number
           if (operation === 'create') {
-            await note(req, { organization: id, event: 'create', status: 'pending' })
+            await note(req, { organization: id, event: 'create', status: 'pending', rorId: organization.rorId, domains: organization.domains })
             // The maker is the first Coordinator, awaiting approval. An organization made with nobody in it waits to be claimed.
             const maker = signedIn(req, s)
             if (maker && !isInternal(req) && !(await ask(opts.canPrecreate, req, organization, organization))) {
@@ -308,11 +342,22 @@ export function organizationsCollection(s: Resolved, opts: OrganizationsOptions)
           }
           if (!previousDoc) return doc
           const before = orgOf(previousDoc)
-          const event = eventFor(before, organization)
-          if (event === 'update' && before.name === organization.name) return doc
-          await note(req, { organization: id, event, status: organization.status, previousStatus: before.status })
+          const key = `organizations:${String(id)}`
+          const flags = req.context?.[key] as { notes?: boolean } | undefined
+          if (flags) delete req.context[key]
+          const found = eventsFor(before, organization, flags?.notes === true)
+          for (const event of found) {
+            const status = event === 'activate' || event === 'close' || event === 'reopen'
+            const widened = event === 'change-domains'
+            await note(req, {
+              organization: id,
+              event,
+              ...(status ? { status: organization.status, previousStatus: before.status } : {}),
+              ...(widened ? { rorId: organization.rorId, previousRorId: before.rorId, domains: organization.domains, previousDomains: before.domains } : {}),
+            })
+          }
           // A reopened organization asks the veto again about everyone in it, because it brings their access back.
-          if (event === 'reopen') {
+          if (found.includes('reopen')) {
             const rows = await req.payload.find({
               collection: MEMBERS as never,
               where: { and: [{ organization: { equals: id } }, { status: { in: ['invited', 'active'] } }] } as never,
@@ -329,7 +374,7 @@ export function organizationsCollection(s: Resolved, opts: OrganizationsOptions)
               }
             }
           }
-          await emit(req, opts.audit?.after, { event, phase: 'after', organization, previous: before, by: by(req) }, false)
+          for (const event of found) await emit(req, opts.audit?.after, { event, phase: 'after', organization, previous: before, by: by(req) }, false)
           return doc
         },
       ],

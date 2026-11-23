@@ -15,6 +15,13 @@ describe('organizations', () => {
     expect(() => organizations({ ...base, refuseMember: false })({ collections: [] } as never)).not.toThrow()
   })
 
+  it('takes only a function or exactly false for refuseMember', () => {
+    for (const bad of [null, 0, '', true, 'no', {}]) {
+      expect(() => organizations({ ...base, refuseMember: bad as never })({ collections: [] } as never)).toThrow(/refuseMember/)
+    }
+    expect(() => organizations({ ...base, refuseMember: () => null })({ collections: [] } as never)).not.toThrow()
+  })
+
   it('adds three collections and keeps the host’s own', () => {
     const out = organizations({ ...base, refuseMember: false })({ collections: [{ slug: 'users', fields: [] }] } as never) as { collections: { slug: string }[] }
     expect(out.collections.map((c) => c.slug)).toEqual(['users', 'organizations', 'organization-members', 'organization-events'])
