@@ -38,6 +38,8 @@ export const organizations =
     if (options.enabled === false) return config
     if (typeof options.refuseMember !== 'function' && options.refuseMember !== false)
       throw new Error('payload-plugin-organizations: pass `refuseMember`, a function that vetoes a member, or exactly `refuseMember: false` to say there is none')
+    if (options.allowWithoutTransactions !== undefined && typeof options.allowWithoutTransactions !== 'boolean')
+      throw new Error('payload-plugin-organizations: `allowWithoutTransactions` must be exactly `true` or `false`, or left out. Anything else is refused so a typo can’t change what the plugin guards')
     const users = options.users ?? config.admin?.user ?? 'users'
     const kinds = options.kinds ?? []
     const resolved: Resolved = {

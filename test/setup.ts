@@ -84,9 +84,13 @@ export async function start() {
   return state.payload
 }
 
+/** Stops the database server and deletes its temp folder, even when closing the adapter throws. */
 export async function stop() {
-  await state.payload?.db?.destroy?.()
-  await state.mongo?.stop()
+  try {
+    await state.payload?.db?.destroy?.()
+  } finally {
+    await state.mongo?.stop({ doCleanup: true, force: true })
+  }
 }
 
 type Raw = { collections: Record<string, { deleteMany: (f: object) => Promise<unknown> }> }
@@ -121,7 +125,7 @@ export const change = (user: U | null, id: unknown, data: Record<string, unknown
 export const rows = (where: Record<string, unknown> = {}) => state.payload.find({ collection: 'organization-members' as never, where: where as never, pagination: false, overrideAccess: true })
 export const rowOf = async (org: unknown, u: U) => {
   const found = await rows({ and: [{ organization: { equals: org } }, { user: { equals: u.id } }] })
-  return found.docs[0] as unknown as { id: string | number; level: string; status: string }
+  return found.docs[0] as unknown as { id: string | number; level: string; status: string; pendingLevel?: string | null }
 }
 export const events = async () =>
   (await state.payload.find({ collection: 'organization-events' as never, sort: 'createdAt', pagination: false, overrideAccess: true })).docs as unknown as { event: string; level?: string; previousLevel?: string; status?: string; previousStatus?: string; memberId?: string }[]

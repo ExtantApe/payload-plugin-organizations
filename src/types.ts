@@ -34,6 +34,8 @@ export type Membership = {
   acceptedAt?: string | null
   removedAt?: string | null
   removedBy?: string | number | null
+  /** A promotion offered to the person. It takes effect when they accept it. Null for none. */
+  pendingLevel?: Level | null
 }
 
 export type KindConfig = { value: string; label?: string }
@@ -101,6 +103,8 @@ export type EventName =
   | 'accept'
   | 'approve'
   | 'change-level'
+  | 'offer-level'
+  | 'cancel-level'
   | 'remove'
 
 export type AuditEvent = {
@@ -150,7 +154,7 @@ export type OrganizationsOptions = {
   /** Who may read every organization, membership and history row, such as staff. Only an exact `true`. Default: nobody. */
   canRead?: (args: { req: PayloadRequest; user: User }) => boolean | Promise<boolean>
   /**
-   * A veto the host controls, asked on every acceptance, approval, level change and reopening, and by
+   * A veto the host controls, asked on every acceptance, approval, accepted promotion and reopening, and by
    * `matchOrganizations`, even for server code that skips access. When one user invites another it is not asked, so an
    * inviter can't learn from a refusal which accounts the veto covers; the invited person is refused when they accept.
    * It is asked at invitation only when nobody else can read the answer: server code, or a person inviting themselves
@@ -164,7 +168,8 @@ export type OrganizationsOptions = {
   /**
    * The plugin checks at start-up that the database can run transactions, because the last-Coordinator guard, the
    * history rows and the picker depend on them, and refuses to start without. Pass `true` only for a database you know
-   * is not used by more than one writer at a time. Default false.
+   * is not used by more than one writer at a time. Only exactly `true` or `false` (or leaving it out) is accepted;
+   * anything else stops the plugin from starting. Default false.
    */
   allowWithoutTransactions?: boolean
   /** Audit hooks for every event. A `before` hook that throws stops the change. An `after` hook that throws is logged and ignored. */

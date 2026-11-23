@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { answers, change, editOrg, events, invite, join, liveOrg, make, orgRow, propose, refused, rowOf, rows, start, state, stop, wipe, type U } from './setup.js'
+import { answers, change, editOrg, events, invite, join, liveOrg, log, make, orgRow, propose, refused, rowOf, rows, start, state, stop, wipe, type U } from './setup.js'
 
 let ann: U, cy: U, dee: U, eli: U, fay: U
 let org: { id: string | number }
@@ -88,6 +88,40 @@ describe('a database that stops handing out transactions after start-up', () => 
     const made = state.payload.create({ collection: 'organization-members' as never, data: { organization: org.id, user: dee.id, level: 'viewer' } as never, overrideAccess: true, disableTransaction: true })
     expect(await refused(made as Promise<unknown>)).toMatch(/needs a transaction/)
     expect(await counts()).toEqual(before)
+  })
+
+  it('leaves the audit hooks silent on a refusal', async () => {
+    await invite(cy, org.id, { user: dee.id, level: 'member' })
+    await join(org.id, cy, eli, 'member')
+    log.length = 0
+    noTransactions()
+    const active = await rowOf(org.id, eli)
+    const invited = await rowOf(org.id, dee)
+    await refused(invite(cy, org.id, { user: fay.id, level: 'member' }))
+    await refused(change(dee, invited.id, { status: 'active' }))
+    await refused(change(cy, active.id, { level: 'viewer' }))
+    await refused(change(cy, active.id, { status: 'removed' }))
+    await refused(editOrg(cy, org.id, { name: 'Renamed' }))
+    await refused(propose(fay))
+    state.payload.db.beginTransaction = begin
+    expect(log).toEqual([])
+  })
+
+  it('refuses disableTransaction on update and delete as well as create', async () => {
+    const r = await join(org.id, cy, dee, 'member')
+    const before = await counts()
+    const update = state.payload.update({ collection: 'organization-members' as never, id: r.id as never, data: { level: 'viewer' } as never, overrideAccess: true, disableTransaction: true })
+    expect(await refused(update as Promise<unknown>)).toMatch(/needs a transaction/)
+    const rename = state.payload.update({ collection: 'organizations' as never, id: org.id as never, data: { name: 'Renamed' } as never, overrideAccess: true, disableTransaction: true })
+    expect(await refused(rename as Promise<unknown>)).toMatch(/needs a transaction/)
+    // A delete is refused for good (nothing is ever deleted), with or without a transaction.
+    const del = state.payload.delete({ collection: 'organization-members' as never, id: r.id as never, overrideAccess: true, disableTransaction: true })
+    expect(await refused(del as Promise<unknown>)).toBeTruthy()
+    const delOrg = state.payload.delete({ collection: 'organizations' as never, id: org.id as never, overrideAccess: true, disableTransaction: true })
+    expect(await refused(delOrg as Promise<unknown>)).toBeTruthy()
+    expect(await counts()).toEqual(before)
+    expect(await rowOf(org.id, dee)).toMatchObject({ level: 'member', status: 'active' })
+    expect(await orgRow(org.id)).toMatchObject({ name: 'Made-up Zoo' })
   })
 
   it('works again as soon as transactions come back', async () => {
