@@ -2,6 +2,12 @@
 
 Kept by this repo's owning session, per `~/Code/CLAUDE.md`, "Test self-audits". Newest first.
 
+## 2026-11-23: withdraw and accept at the same moment
+
+- Promise added: when a withdraw and an accept (or any two changes) meet on one membership row, one wins and the other gets a plain 403, with no raw database error and no 500.
+- Covered: `test/offer-race.test.ts` (5 tests, 131 in all): the conflict matcher on the error shapes the driver gives (code 112, `WriteConflict`, the `TransientTransactionError` label, nested causes, a loop that must end); a row held by another open transaction, refused cleanly over the Local API and over REST with the row unchanged; eight rounds of a real withdraw and accept at once on a replica set over the Local API and over REST, each with at least one success, any failure a plain 403, and a final row that is either accepted or withdrawn. The first four fail when the row-lock write is removed.
+- Gaps skipped: forcing the timing of the two-at-once rounds (they may run one after the other, and then both succeed; the held-row tests cover the conflict itself); GraphQL (it takes the same hook as REST and the Local API).
+
 ## 2026-11-23: level-change oracle and transaction-guard gaps
 
 - Promises added: a promotion is only an offer, and the one who promotes sees the same status, body, row, history rows, counts and audit calls for any person; the veto runs when the person accepts and answers only them; a demotion is immediate and never asks the veto; the pending level can't be set directly; `allowWithoutTransactions` must be `true`, `false` or unset; `allowWithoutTransactions: true` lets writes through; audit hooks stay silent on a refusal; `disableTransaction` is refused on update (delete is refused by the never-delete rule).

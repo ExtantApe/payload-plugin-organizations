@@ -1,7 +1,7 @@
 import type { CollectionConfig, PayloadRequest, Where } from 'payload'
 
 import { emit, involved, noBulk, note, orgOf } from './organizations.js'
-import { asInternal, exactlyTrue, heldBy, idOf, isInternal, levelIn, levelOf, needTransaction, refuse, signedIn } from './helpers.js'
+import { asInternal, claim, exactlyTrue, heldBy, idOf, isInternal, levelIn, levelOf, needTransaction, refuse, signedIn } from './helpers.js'
 import { GENERAL, loadOrganization, vetoed } from './veto.js'
 import { EVENTS, LEVELS, MEMBERS, ORGANIZATIONS, RANK, type Level, type MemberArgs, type Membership, type MemberStatus, type OrganizationsOptions, type Resolved } from './types.js'
 
@@ -208,6 +208,8 @@ export function membersCollection(s: Resolved, opts: OrganizationsOptions): Coll
           }
 
           // An update. Organization, person and who invited never change; only level and status do.
+          // Take the row's write lock first, so a withdraw and an accept at the same moment end in one success and one plain refusal.
+          await claim(req, MEMBERS, originalDoc.id)
           const before = normalize(originalDoc)
           const sent = plain(data)
           for (const f of ['organization', 'user', 'invitedBy'] as const) {

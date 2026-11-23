@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed
+
+- A withdraw and an accept on the same membership at the same moment now end in one success and one plain refusal (403). Before, the one that lost got the database's raw write conflict. Every change to a membership now first writes the row once to take its lock, as the positions plugin does, and write conflicts (code 112, `WriteConflict`, the `TransientTransactionError` label, also as a nested cause) become the refusal.
+- Tested: 5 new tests (131 in all; typecheck and leak check clean, full suite run twice): the conflict matcher, a row held by another open transaction refused with a 403 over the Local API and over REST, and eight rounds of a real withdraw and accept at once on a replica set over each, with no raw error and a final row that is either accepted or withdrawn. The held-row and two-at-once tests fail without the fix. Not tested: a live site, GraphQL for this race, a conflict from a database other than MongoDB, and forcing the two-at-once timing (some rounds run one after the other and both succeed).
+
 ### Breaking
 
 - A promotion of an active member is now an offer. The row keeps its level and gets a new `pendingLevel` field; the person accepts by sending the new level themselves, or declines by sending `pendingLevel: null`. Anyone `canChangeLevel` allows can withdraw it the same way. Before, a Coordinator who promoted someone the host's veto refused got a 403 with no history row, while promoting anyone else worked, which told them who the veto covers (for example a minor). Now the veto runs only when the person accepts, and the promoter sees the same answer, row, history and audit calls for everyone. A demotion still takes effect at once and no longer asks the veto. Two new history events and audit events, `offer-level` and `cancel-level`, record an offer and its withdrawal; `change-level` is recorded when the person accepts. Server code with no signed-in user still promotes at once and sees the veto's reason. Hosts that listed or counted `change-level` events or relied on an immediate promotion need to change.
