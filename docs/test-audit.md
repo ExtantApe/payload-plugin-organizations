@@ -2,6 +2,12 @@
 
 Kept by this repo's owning session, per `~/Code/CLAUDE.md`, "Test self-audits". Newest first.
 
+## 2026-11-23: the row lock as an oracle
+
+- Promise added: a refused change never touches a membership row, and the lock write comes only after every refusal and the veto, so a Coordinator's changes can't show whether a vetoed minor is accepting at the same moment. The conflict matcher maps only the database's write-conflict code to the someone-else refusal.
+- Covered: `test/offer-race.test.ts` (10 tests, 136 in all). Matcher negatives: the `TransientTransactionError` label alone, message only, a wrong-type code. Refused changes (a vetoed accept over the Local API and REST, an unknown level, a bad status, an organization change) make no lock write and leave the row, `updatedAt` included, as it was; an allowed change makes exactly one lock write. A Coordinator's no-op change while a vetoed minor accepts is compared with the same change with nothing running, 12 rounds each over the Local API and REST. Four of the five new tests fail on the previous code; the fifth is the positive control.
+- Gaps skipped: `allowWithoutTransactions: true` run end to end (the updatedAt bump came from the lock write, which the call counts and unchanged row cover); GraphQL (same hook).
+
 ## 2026-11-23: withdraw and accept at the same moment
 
 - Promise added: when a withdraw and an accept (or any two changes) meet on one membership row, one wins and the other gets a plain 403, with no raw database error and no 500.

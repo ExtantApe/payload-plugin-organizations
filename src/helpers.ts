@@ -21,20 +21,14 @@ export async function needTransaction(req: PayloadRequest, s: Resolved) {
   if (s.needsTransactions && !(await req.transactionID)) throw refuse('This change needs a transaction, so it wasn’t made.')
 }
 
-/** True for the errors a database gives when two transactions write the same row at once, also when they are wrapped as a cause. */
+/**
+ * True only for the database's write-conflict error (MongoDB code 112, `WriteConflict`), also when it is wrapped as a cause.
+ * The `TransientTransactionError` label and the message text are not enough on their own: other faults carry them too, and mapping those would hide them.
+ */
 export const isConflict = (error: unknown, depth = 0): boolean => {
-  const x = error as { code?: unknown; codeName?: string; errorLabels?: unknown; hasErrorLabel?: (l: string) => boolean; message?: string; cause?: unknown; errorResponse?: unknown } | null
+  const x = error as { code?: unknown; codeName?: unknown; cause?: unknown; errorResponse?: unknown } | null
   if (!x || typeof x !== 'object' || depth > 5) return false
   if (x.code === 112 || x.codeName === 'WriteConflict') return true
-  if (Array.isArray(x.errorLabels) && x.errorLabels.includes('TransientTransactionError')) return true
-  if (typeof x.hasErrorLabel === 'function') {
-    try {
-      if (x.hasErrorLabel('TransientTransactionError')) return true
-    } catch {
-      // Not a real driver error; carry on with the other checks.
-    }
-  }
-  if (/write conflict|WriteConflict/i.test(String(x.message ?? ''))) return true
   return isConflict(x.cause, depth + 1) || isConflict(x.errorResponse, depth + 1)
 }
 
