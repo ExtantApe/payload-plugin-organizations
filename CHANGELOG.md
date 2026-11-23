@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.0 (2026-11-23)
 
 - Three finds in the last-Coordinator check and the invitation duplicate check now pass `pagination: false`, so inside a transaction they don't send a count alongside the find, which can fail intermittently with NoSuchTransaction when it is the transaction's first query. None of them used the total. Tested: a test pins `pagination: false` on every find the plugin makes with a request while its flows run (106 tests; the full suite passed five times in a row). Not tested: a live site.
 - The repo, with the standard Payload plugin kit. Public since 2026-11-22.
