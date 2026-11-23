@@ -13,6 +13,14 @@ export async function exactlyTrue(check: () => unknown): Promise<boolean> {
   }
 }
 
+/**
+ * Server code can pass `disableTransaction`, and an adapter can start answering with no transaction after start-up.
+ * Either way the write is refused, because it must be atomic with its lock and history rows.
+ */
+export async function needTransaction(req: PayloadRequest, s: Resolved) {
+  if (s.needsTransactions && !(await req.transactionID)) throw refuse('This change needs a transaction, so it wasn’t made.')
+}
+
 /** The id of a document given as a document, an id, or nothing. */
 export const idOf = (value: unknown): string | number | null => {
   if (value === null || value === undefined) return null

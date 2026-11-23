@@ -2,7 +2,7 @@ import type { CollectionConfig, PayloadRequest } from 'payload'
 
 import { isGenericDomain, isPublicSuffix, normalizeDomain } from './domains.js'
 import { vetoed } from './veto.js'
-import { asInternal, exactlyTrue, idOf, isInternal, levelIn, refuse, signedIn } from './helpers.js'
+import { asInternal, exactlyTrue, idOf, isInternal, levelIn, needTransaction, refuse, signedIn } from './helpers.js'
 import {
   EVENTS,
   MEMBERS,
@@ -252,6 +252,7 @@ export function organizationsCollection(s: Resolved, opts: OrganizationsOptions)
       ],
       beforeChange: [
         async ({ data, originalDoc, operation, req }) => {
+          await needTransaction(req, s)
           const user = signedIn(req, s)
           if (req.user && !user) throw refuse('Only a signed-in user can change organizations.')
           const trusted = !req.user || isInternal(req)

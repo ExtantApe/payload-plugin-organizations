@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Breaking
+
+- A promotion of an active member is now an offer. The row keeps its level and gets a new `pendingLevel` field; the person accepts by sending the new level themselves, or declines by sending `pendingLevel: null`. Anyone `canChangeLevel` allows can withdraw it the same way. Before, a Coordinator who promoted someone the host's veto refused got a 403 with no history row, while promoting anyone else worked, which told them who the veto covers (for example a minor). Now the veto runs only when the person accepts, and the promoter sees the same answer, row, history and audit calls for everyone. A demotion still takes effect at once and no longer asks the veto. Two new history events and audit events, `offer-level` and `cancel-level`, record an offer and its withdrawal; `change-level` is recorded when the person accepts. Server code with no signed-in user still promotes at once and sees the veto's reason. Hosts that listed or counted `change-level` events or relied on an immediate promotion need to change.
+- `allowWithoutTransactions` must be exactly `true`, `false` or left out. Any other value stops the plugin from starting with an error. Before, it kept the guard on without saying so.
+- README and test audit: a wrong level name is fixed (this plugin's levels are Coordinator, Member and Viewer).
+- Tested: 14 new tests (126 in all; typecheck and leak check clean, full suite run twice): an adult promotion against a vetoed minor promotion compared field by field from the promoter's side over the Local API, REST and GraphQL (status, body, row, history rows, counts, audit calls); accept, refused accept, decline, withdraw, direct set, demotion and removal clearing an offer; server-code promotion; `allowWithoutTransactions: true` lets writes through; audit hooks silent on a refusal; `disableTransaction` refused on update; the option check. Test databases are stopped and their temp folders removed in a `finally`. Not tested: timing of the promoter's reply (the veto is not called on that path, so no clock test), a live site, the admin screens in a browser, and a person working out from a pending offer that stays pending for a long time.
+
+## 0.1.1 (unreleased)
+
+- Every write the plugin guards now refuses cleanly when the database hands back no transaction, or when server code passes `disableTransaction`, and writes nothing. Before, only the start-up check looked, so a database that began answering with no transaction later still let an invitation through. The check runs first in the change hook of organizations, memberships and history rows, with a message saying the change needs a transaction. `allowWithoutTransactions: true` turns it off along with the start-up check.
+- A level change that the veto refuses on an active row read the same as any other refused change to the changer; the level-dependent tell this left is fixed in Unreleased above.
+- Tested: 6 new tests with `beginTransaction` stubbed to answer null after start-up: invite, accept, level change, removal, new organization, edit, close, server-code writes, a history row on its own and `disableTransaction` are refused with no rows or events added, and the same calls work once transactions return (112 tests in all; typecheck and leak check clean). Not tested: a real adapter that loses transactions mid-run, and a live site.
+
 ## 0.1.0 (2026-11-23)
 
 - Three finds in the last-Coordinator check and the invitation duplicate check now pass `pagination: false`, so inside a transaction they don't send a count alongside the find, which can fail intermittently with NoSuchTransaction when it is the transaction's first query. None of them used the total. Tested: a test pins `pagination: false` on every find the plugin makes with a request while its flows run (106 tests; the full suite passed five times in a row). Not tested: a live site.

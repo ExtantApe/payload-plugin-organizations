@@ -131,7 +131,10 @@ describe('the veto', () => {
     await state.payload.update({ collection: 'users', id: dee.id as never, data: { minor: false } as never, overrideAccess: true })
     await change(dee, (await rowOf(org.id, dee)).id, { status: 'active' })
     await state.payload.update({ collection: 'users', id: dee.id as never, data: { minor: true } as never, overrideAccess: true })
-    expect(await refused(change(cy, (await rowOf(org.id, dee)).id, { level: 'viewer' }))).toMatch(/can’t change this person’s level/)
+    // A promotion is only offered; the veto answers the person when they accept it.
+    expect(await refused(change(cy, (await rowOf(org.id, dee)).id, { level: 'coordinator' }))).toBeNull()
+    expect(await refused(change(dee, (await rowOf(org.id, dee)).id, { level: 'coordinator' }))).toMatch(/Not available/)
+    expect(await rowOf(org.id, dee)).toMatchObject({ level: 'member', pendingLevel: 'coordinator' })
     expect(await refused(server((await rowOf(org.id, dee)).id, { level: 'coordinator' }))).toMatch(/Not available/)
     expect((await rowOf(org.id, dee)).level).toBe('member')
   })
@@ -298,12 +301,13 @@ describe('the history', () => {
   it('records every creation, invitation, approval, acceptance, level change and removal, and nothing for a refused change', async () => {
     const r = await join(org.id, cy, dee, 'viewer')
     await change(cy, r.id, { level: 'member' })
+    await change(dee, r.id, { level: 'member' })
     await change(dee, r.id, { status: 'removed' })
     const before = (await events()).length
     await refused(change(dee, r.id, { status: 'active' }))
     expect((await events()).length).toBe(before)
     const list = await events()
-    expect(list.map((e) => e.event)).toEqual(['create', 'invite', 'approve', 'activate', 'invite', 'accept', 'change-level', 'remove'])
+    expect(list.map((e) => e.event)).toEqual(['create', 'invite', 'approve', 'activate', 'invite', 'accept', 'offer-level', 'change-level', 'remove'])
     const level = list.find((e) => e.event === 'change-level')!
     expect([level.previousLevel, level.level]).toEqual(['viewer', 'member'])
     expect(list.at(-1)!.previousStatus).toBe('active')
@@ -472,20 +476,13 @@ describe('what an inviter can learn from the answers', () => {
 })
 
 describe('a level change on an active row', () => {
-  it('looks the same to the changer for a vetoed member and one they may not change', async () => {
+  it('lets a demotion through at once and never asks the veto', async () => {
     const a = await join(org.id, cy, dee, 'member')
-    const b = await join(org.id, cy, eli, 'member')
     await state.payload.update({ collection: 'users', id: dee.id as never, data: { minor: true } as never, overrideAccess: true })
-    const before = (await events()).length
-    answers.canChangeLevel = ({ member }: { member: { user?: unknown } }) => String(member.user) !== String(eli.id)
-    const vetoed = await refused(change(cy, a.id, { level: 'viewer' }))
-    const notAllowed = await refused(change(cy, b.id, { level: 'viewer' }))
-    expect(vetoed).toBe(notAllowed)
-    expect(vetoed).not.toMatch(/Not available/)
-    expect((await rowOf(org.id, dee)).level).toBe('member')
-    expect((await events()).length).toBe(before)
-    // Server code still sees the reason.
-    expect(await refused(state.payload.update({ collection: 'organization-members' as never, id: a.id as never, data: { level: 'viewer' } as never, overrideAccess: true }))).toMatch(/Not available/)
+    log.length = 0
+    expect(await refused(change(cy, a.id, { level: 'viewer' }))).toBeNull()
+    expect(log).not.toContain('veto:change-level')
+    expect(await rowOf(org.id, dee)).toMatchObject({ level: 'viewer' })
   })
 })
 
