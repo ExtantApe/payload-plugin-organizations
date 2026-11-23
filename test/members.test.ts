@@ -432,3 +432,54 @@ describe('who may ask about an organization', () => {
     expect(msgs[0]).toMatch(/can’t invite/)
   })
 })
+
+describe('what an inviter can learn from the answers', () => {
+  it('refuses a level change on an invited row the same way for a minor and an adult', async () => {
+    await invite(cy, org.id, { user: kid.id, level: 'viewer' })
+    await invite(cy, org.id, { user: dee.id, level: 'viewer' })
+    log.length = 0
+    const a = await refused(change(cy, (await rowOf(org.id, kid)).id, { level: 'member' }))
+    const b = await refused(change(cy, (await rowOf(org.id, dee)).id, { level: 'member' }))
+    expect(a).toMatch(/until the person accepts/)
+    expect(a).toBe(b)
+    expect(log).not.toContain('veto:change-level')
+    expect((await rowOf(org.id, kid)).level).toBe('viewer')
+    expect((await rowOf(org.id, dee)).level).toBe('viewer')
+  })
+
+  it('answers an invitation to an id that does not exist like any other refused invitation', async () => {
+    const missing = await refused(invite(cy, org.id, { user: '000000000000000000000000', level: 'member' }))
+    const garbage = await refused(invite(cy, org.id, { user: 'not-an-id', level: 'member' }))
+    const stranger = await refused(invite(eli, org.id, { user: dee.id, level: 'member' }))
+    expect(missing).toMatch(/can’t invite people/)
+    expect(missing).toBe(stranger)
+    expect(garbage).toBe(stranger)
+    expect((await rows({ user: { equals: '000000000000000000000000' } })).totalDocs).toBe(0)
+  })
+
+  it('does not tell a Member that someone they can’t see already has an invited row', async () => {
+    await join(org.id, cy, dee, 'member')
+    await invite(cy, org.id, { user: kid.id, level: 'viewer' })
+    // A Member may invite Viewers; they can't see the minor's row.
+    const dup = await refused(invite(dee, org.id, { user: kid.id, level: 'viewer' }))
+    const other = await refused(invite(eli, org.id, { user: fay.id, level: 'viewer' }))
+    expect(dup).toBe(other)
+    expect(dup).not.toMatch(/already/)
+    // A Coordinator sees every row, so they are told plainly.
+    expect(await refused(invite(cy, org.id, { user: kid.id, level: 'viewer' }))).toMatch(/already/)
+  })
+})
+
+describe('approving after leaving', () => {
+  it('counts a removed row, so an approver can’t leave, approve and be invited back', async () => {
+    answers.canPrecreate = () => false
+    answers.canInvite = () => true
+    const pend = await propose(cy, { name: 'Leave And Return Zoo' })
+    await invite(cy, pend.id, { user: ann.id, level: 'member' })
+    await change(ann, (await rowOf(pend.id, ann)).id, { status: 'removed' })
+    expect(await refused(change(ann, (await rowOf(pend.id, cy)).id, { status: 'active' }))).toMatch(/made or belong to/)
+    expect((await orgRow(pend.id)).status).toBe('pending')
+    await change(bea, (await rowOf(pend.id, cy)).id, { status: 'active' })
+    expect((await orgRow(pend.id)).status).toBe('active')
+  })
+})

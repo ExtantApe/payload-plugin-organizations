@@ -159,8 +159,10 @@ export function membersCollection(s: Resolved, opts: OrganizationsOptions): Coll
             const organization = await loadOrganization(req, d.organization, orgOf)
             if (!organization) throw refuse('Unknown organization.')
             if (organization.status === 'closed') throw refuse('This organization is closed.')
+            // Refusals about the person all read the same as a refused invitation, so an inviter can't tell a missing account, an invited minor or a member they can't see apart.
+            const cannot = () => refuse('You can’t invite people to this organization.')
             const userId = idOf(d.user)
-            if (userId === null) throw refuse('Unknown person.')
+            if (userId === null) throw cannot()
             const level = levelOf(d.level)
             if (!level) throw refuse('Unknown level.')
             data.organization = organization.id
@@ -179,9 +181,14 @@ export function membersCollection(s: Resolved, opts: OrganizationsOptions): Coll
               overrideAccess: true,
               req,
             })
-            if (dup.docs.length) throw refuse('That person is already in this organization.')
-            const subject = await req.payload.count({ collection: s.users as never, where: { id: { equals: userId } } as never, overrideAccess: true, req })
-            if (!subject.totalDocs) throw refuse('Unknown person.')
+            if (dup.docs.length) {
+              // Say so plainly only to someone who can already see that row.
+              if (trusted) throw refuse('That person is already in this organization.')
+              const seen = await req.payload.find({ collection: MEMBERS as never, where: { id: { equals: dup.docs[0]!.id } } as never, limit: 1, depth: 0, overrideAccess: false, req }).catch(() => null)
+              throw seen?.docs.length ? refuse('That person is already in this organization.') : cannot()
+            }
+            const subject = await req.payload.count({ collection: s.users as never, where: { id: { equals: userId } } as never, overrideAccess: true, req }).catch(() => null)
+            if (!subject?.totalDocs) throw trusted ? refuse('Unknown person.') : cannot()
             // The veto runs when the person accepts, so an inviter sees the same answer for every account. It is asked now only when the person invites themselves (the maker of an organization) or server code does, where nobody else can read the answer.
             if (trusted || (me !== null && String(me.id) === String(userId))) await vetoed(opts, s.users, req, organization, userId, level, 'invite')
             // The database's unique index on this key is what stops two requests at once.
@@ -228,6 +235,8 @@ export function membersCollection(s: Resolved, opts: OrganizationsOptions): Coll
             if (!trusted) {
               if (self && RANK[level] > RANK[before.level]) throw refuse('Nobody raises their own level.')
               if (!(await ask(opts.canChangeLevel, req, before, { ...ctx, to: level }))) throw refuse('You can’t change this person’s level.')
+              // Asking the veto about someone who hasn't accepted would tell the asker who it covers. Invite them again at the new level; the veto runs when they accept.
+              if (before.status === 'invited') throw refuse('A level can’t be changed until the person accepts. Invite them again at the new level.')
             }
             if (before.status === 'active' && before.level === 'coordinator' && level !== 'coordinator') await keepACoordinator(req, organization.id, before.id as string | number)
             await vetoed(opts, s.users, req, organization, before.user, level, 'change-level')

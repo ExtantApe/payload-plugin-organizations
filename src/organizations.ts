@@ -87,14 +87,15 @@ export async function note(
   })
 }
 
-/** Whether the asker made this organization, or is, or is waiting to become, a member of it. Nobody approves their own. */
+/** Whether the asker made this organization, or is, was, or is waiting to become, a member of it. Nobody approves their own. */
 export async function involved(req: PayloadRequest, id: string | number, createdBy: unknown) {
   const me = idOf(req.user)
   if (me === null) return false
   if (String(idOf(createdBy)) === String(me)) return true
   const rows = await req.payload.count({
     collection: MEMBERS as never,
-    where: { and: [{ organization: { equals: id } }, { user: { equals: me } }, { status: { in: ['invited', 'active'] } }] } as never,
+    // Every row counts, removed ones too, or someone could leave, approve, and be invited back.
+    where: { and: [{ organization: { equals: id } }, { user: { equals: me } }] } as never,
     overrideAccess: true,
     req,
   })
@@ -360,7 +361,8 @@ export function organizationsCollection(s: Resolved, opts: OrganizationsOptions)
           if (found.includes('reopen')) {
             const rows = await req.payload.find({
               collection: MEMBERS as never,
-              where: { and: [{ organization: { equals: id } }, { status: { in: ['invited', 'active'] } }] } as never,
+              // Only people already active: an invited person is checked when they accept, so reopening never shows who the veto covers.
+              where: { and: [{ organization: { equals: id } }, { status: { equals: 'active' } }] } as never,
               pagination: false,
               depth: 0,
               overrideAccess: true,

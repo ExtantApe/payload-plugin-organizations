@@ -8,7 +8,12 @@ import { answers, as, call, change, editOrg, invite, join, liveOrg, make, orgRow
 
 /** Written out so the leak check sees no address in the file. */
 const AT = '@'
-const mm = (email: string, extra: Record<string, unknown> = {}, assumeVerified?: boolean) => matchOrganizations(state.payload, { id: dee.id, email, _verified: true, ...extra }, { assumeVerified })
+const mm = async (email: string, extra: Record<string, unknown> = {}, assumeVerified?: boolean) => {
+  // The matcher reads the user from the database, so the address and flag are set there, directly, so that odd addresses can be tried too.
+  const raw = (state.payload.db as unknown as { collections: Record<string, { updateOne: (f: object, u: object) => Promise<unknown> }> }).collections.users!
+  await raw.updateOne({ _id: dee.id }, { $set: { email, _verified: '_verified' in extra ? extra._verified : true } })
+  return matchOrganizations(state.payload, { id: dee.id }, { assumeVerified })
+}
 
 let ann: U, bea: U, cy: U, dee: U, eli: U, fay: U
 let org: { id: string | number }
@@ -181,15 +186,19 @@ describe('the domain hint, for a person', () => {
   it('lists nothing before the email is verified, unless the host says it has checked', async () => {
     await editOrg(ann, org.id, { domains: ['made-up-zoo.org'] })
     expect(await mm(`dee${AT}made-up-zoo.org`, { _verified: false })).toEqual([])
-    expect(await mm(`dee${AT}made-up-zoo.org`, { _verified: undefined })).toEqual([])
-    expect(await mm(`dee${AT}made-up-zoo.org`, { _verified: 'true' })).toEqual([])
-    expect((await mm(`dee${AT}made-up-zoo.org`, { _verified: undefined }, true)).length).toBe(1)
+    expect(await mm(`dee${AT}made-up-zoo.org`, { _verified: null })).toEqual([])
+    expect((await mm(`dee${AT}made-up-zoo.org`, { _verified: false }, true)).length).toBe(1)
+    expect((await mm(`dee${AT}made-up-zoo.org`)).length).toBe(1)
+    // A stale object is not trusted: the flag and address come from the database.
+    await mm(`dee${AT}made-up-zoo.org`, { _verified: false })
+    expect(await matchOrganizations(state.payload, { id: dee.id, email: `dee${AT}made-up-zoo.org`, _verified: true } as never)).toEqual([])
   })
 
   it('runs the host’s veto itself and drops an organization it refuses, without saying why', async () => {
     await editOrg(ann, org.id, { domains: ['made-up-zoo.org'] })
-    expect(await matchOrganizations(state.payload, { id: kid.id, email: `kid${AT}made-up-zoo.org`, _verified: true })).toEqual([])
-    expect((await matchOrganizations(state.payload, { id: dee.id, email: `dee${AT}made-up-zoo.org`, _verified: true })).length).toBe(1)
+    await state.payload.update({ collection: 'users', id: kid.id as never, data: { email: `kid${AT}made-up-zoo.org`, _verified: true } as never, overrideAccess: true })
+    expect(await matchOrganizations(state.payload, { id: kid.id })).toEqual([])
+    expect((await mm(`dee${AT}made-up-zoo.org`)).length).toBe(1)
   })
 })
 

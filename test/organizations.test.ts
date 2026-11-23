@@ -292,6 +292,23 @@ describe('the audit hooks', () => {
   })
 })
 
+describe('reopening', () => {
+  it('asks the veto about active people only, and leaves invited ones to be checked when they accept', async () => {
+    const org = await liveOrg(cy, ann)
+    answers.canInvite = () => true
+    await invite(cy, org.id, { user: kid.id, level: 'viewer' })
+    await invite(cy, org.id, { user: dee.id, level: 'viewer' })
+    await editOrg(ann, org.id, { status: 'closed' })
+    log.length = 0
+    await editOrg(bea, org.id, { status: 'active' })
+    expect(log.filter((l) => l === 'veto:reopen').length).toBe(1)
+    expect((await rowOf(org.id, kid)).status).toBe('invited')
+    expect((await rowOf(org.id, dee)).status).toBe('invited')
+    expect((await events()).filter((e) => e.event === 'remove')).toEqual([])
+    expect(await refused(change(kid, (await rowOf(org.id, kid)).id, { status: 'active' }))).toMatch(/Not available/)
+  })
+})
+
 describe('widening by someone involved', () => {
   it('stops an approver who made or belongs to an organization from changing its ROR id or domains', async () => {
     const org = await liveOrg(cy, ann)

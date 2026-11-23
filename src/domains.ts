@@ -95,9 +95,11 @@ export type DomainMatch = { id: string | number; name: string; kind: string; dom
 
 /**
  * Organizations a person's email address suggests. This is a hint and nothing more: it never adds a membership or
- * grants anything, and the host decides what to do with it. It finds only active organizations, and only for a user
- * whose email is verified (`_verified` is true, or the host passes `assumeVerified: true` when it has checked the
- * address another way); otherwise it returns nothing, so an unverified address can't be used to list names. Each match
+ * grants anything, and the host decides what to do with it. It reads the user again from the database and finds only
+ * active organizations, and only for a user whose email is verified (`_verified` is true, or the host passes
+ * `assumeVerified: true` when it has checked the address another way); otherwise it returns nothing, so an
+ * unverified address can't be used to list names. Payload doesn't clear `_verified` when the email changes, so the
+ * host must reset it then. Each match
  * is put through the host's veto (`refuseMember`, action `suggest`) and dropped silently if refused. Public mail, school
  * and ISP domains match nothing. A kind in `rorRequiredKinds` matches only once it has a ROR id. A listed domain also
  * matches every subdomain. It reads without access rules, so call it from server code and show the result only to the
@@ -105,14 +107,17 @@ export type DomainMatch = { id: string | number; name: string; kind: string; dom
  */
 export async function matchOrganizations(
   from: Payload | Pick<PayloadRequest, 'payload'>,
-  user: { id: string | number; email?: unknown; _verified?: unknown },
+  user: { id: string | number },
   options: { assumeVerified?: boolean } = {},
 ): Promise<DomainMatch[]> {
   const payload = 'payload' in from ? from.payload : from
   const s = settings({ payload })
-  if (user._verified !== true && options.assumeVerified !== true) return []
   const userId = idOf(user)
-  const domain = domainOf(user.email)
+  if (userId === null) return []
+  // Read from the database, so a stale object or a changed address can't be trusted.
+  const fresh = (await payload.findByID({ collection: s.users as never, id: userId, depth: 0, overrideAccess: true }).catch(() => null)) as { email?: unknown; _verified?: unknown } | null
+  if (!fresh || (fresh._verified !== true && options.assumeVerified !== true)) return []
+  const domain = domainOf(fresh.email)
   if (userId === null || !domain || isGenericDomain(domain, s.genericDomains)) return []
   const candidates = withParents(domain)
   const found = await payload.find({

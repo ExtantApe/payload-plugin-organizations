@@ -33,6 +33,8 @@ export async function start() {
         fields: [
           { name: 'staff', type: 'checkbox' },
           { name: 'minor', type: 'checkbox' },
+          // Stands in for the field Payload adds when email verification is on.
+          { name: '_verified', type: 'checkbox' },
         ],
       },
       { slug: 'admins', auth: true, fields: [] },
