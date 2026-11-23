@@ -45,6 +45,8 @@ export type Resolved = {
   rorRequiredKinds: string[]
   genericDomains: string[]
   refuseMember: RefuseMember | false
+  /** False only when the host passed `allowWithoutTransactions: true`. */
+  needsTransactions: boolean
 }
 
 type User = { id: string | number; collection?: string } & Record<string, unknown>

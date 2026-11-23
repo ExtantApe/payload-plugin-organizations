@@ -1,7 +1,7 @@
 import type { CollectionConfig, PayloadRequest, Where } from 'payload'
 
 import { emit, involved, noBulk, note, orgOf } from './organizations.js'
-import { asInternal, exactlyTrue, heldBy, idOf, isInternal, levelIn, levelOf, refuse, signedIn } from './helpers.js'
+import { asInternal, exactlyTrue, heldBy, idOf, isInternal, levelIn, levelOf, needTransaction, refuse, signedIn } from './helpers.js'
 import { GENERAL, loadOrganization, vetoed } from './veto.js'
 import { EVENTS, LEVELS, MEMBERS, ORGANIZATIONS, RANK, type Level, type MemberArgs, type Membership, type MemberStatus, type OrganizationsOptions, type Resolved } from './types.js'
 
@@ -148,6 +148,7 @@ export function membersCollection(s: Resolved, opts: OrganizationsOptions): Coll
       ],
       beforeChange: [
         async ({ data, originalDoc, operation, req }) => {
+          await needTransaction(req, s)
           const now = new Date().toISOString()
           const me = signedIn(req, s)
           if (req.user && !me) throw refuse('Only a signed-in user can change memberships.')
@@ -349,7 +350,8 @@ export function eventsCollection(s: Resolved, opts: OrganizationsOptions): Colle
       beforeOperation: [noBulk],
       beforeDelete: [stop('deleted')],
       beforeChange: [
-        ({ operation, data }) => {
+        async ({ operation, data, req }) => {
+          await needTransaction(req, s)
           if (operation !== 'create') throw refuse('The history can’t be edited.')
           return data
         },

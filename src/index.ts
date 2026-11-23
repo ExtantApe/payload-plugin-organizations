@@ -46,6 +46,7 @@ export const organizations =
       rorRequiredKinds: options.rorRequiredKinds ?? [],
       genericDomains: options.genericDomains ?? [],
       refuseMember: options.refuseMember,
+      needsTransactions: options.allowWithoutTransactions !== true,
     }
     return {
       ...config,

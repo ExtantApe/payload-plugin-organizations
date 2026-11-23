@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1 (unreleased)
+
+- Every write the plugin guards now refuses cleanly when the database hands back no transaction, or when server code passes `disableTransaction`, and writes nothing. Before, only the start-up check looked, so a database that began answering with no transaction later still let an invitation through. The check runs first in the change hook of organizations, memberships and history rows, with a message saying the change needs a transaction. `allowWithoutTransactions: true` turns it off along with the start-up check.
+- README: with a veto that depends on the level, an Owner can tell a refused level change on an active row from an allowed one. This is documented and not changed.
+- Tested: 6 new tests with `beginTransaction` stubbed to answer null after start-up: invite, accept, level change, removal, new organization, edit, close, server-code writes, a history row on its own and `disableTransaction` are refused with no rows or events added, and the same calls work once transactions return (112 tests in all; typecheck and leak check clean). Not tested: a real adapter that loses transactions mid-run, and a live site.
+
 ## 0.1.0 (2026-11-23)
 
 - Three finds in the last-Coordinator check and the invitation duplicate check now pass `pagination: false`, so inside a transaction they don't send a count alongside the find, which can fail intermittently with NoSuchTransaction when it is the transaction's first query. None of them used the total. Tested: a test pins `pagination: false` on every find the plugin makes with a request while its flows run (106 tests; the full suite passed five times in a row). Not tested: a live site.

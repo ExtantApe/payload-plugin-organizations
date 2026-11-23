@@ -2,6 +2,12 @@
 
 Kept by this repo's owning session, per `~/Code/CLAUDE.md`, "Test self-audits". Newest first.
 
+## 2026-11-23: transaction guard
+
+- Promise added: a write that relies on a transaction is refused, with nothing written, when the adapter answers with no transaction after start-up or server code disables it.
+- Covered: `test/guard.test.ts` (6 tests, 112 in all) with `beginTransaction` stubbed to null: invite, accept, level change, removal, last-Coordinator leave, new organization, edit, close, direct history row, server-code writes and `disableTransaction`; row, organization and event counts are unchanged, and writes work again once transactions return.
+- Gaps skipped: a real adapter losing its connection mid-run (the stub answers the same way the adapter does); the level-dependent veto tell for Owners (documented in the README, not a promise).
+
 ## 2026-11-23: after the review fixes
 
 - Promises added: no approving through a second account; the veto is not asked at invitation, so inviters see one answer; `refuseMember` is a function or exactly `false`; no start without transactions unless opted out; no bulk update or delete; public suffixes refused; matcher needs a verified email and runs the veto; the picker respects read access; history keeps values and one row per change.
