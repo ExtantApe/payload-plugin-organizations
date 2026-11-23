@@ -2,17 +2,17 @@
   "name": "@extantape/payload-plugin-organizations",
   "version": "0.0.0",
   "private": true,
-  "description": "Organizations for Payload: a curated list of zoos, labs, museums and other institutions, with ROR and Wikidata importers, a picker field, user suggestions a curator merges, and an email-domain hint that never grants access.",
+  "description": "Organizations for Payload: places people work or belong, with Coordinator, Member and Viewer levels, pending organizations a host approves, a shipped list of public mail domains, and a picker field. Access rules are the host's.",
   "keywords": [
     "payload",
     "payload-plugin",
     "payloadcms",
     "organizations",
-    "institutions",
+    "memberships",
+    "access-control",
     "ror",
-    "wikidata",
-    "zoos",
-    "curation"
+    "email-domains",
+    "teams"
   ],
   "license": "MIT",
   "homepage": "https://github.com/ExtantApe/payload-plugin-organizations#readme",
@@ -52,11 +52,15 @@
   },
   "devDependencies": {
     "@payloadcms/db-mongodb": "3.92.1",
+    "@payloadcms/graphql": "3.92.1",
     "@types/node": "^24.0.0",
     "graphql": "^16.14.2",
     "mongodb-memory-server": "^11.3.0",
     "payload": "3.92.1",
     "typescript": "^5.9.0",
     "vitest": "^5.1.0"
+  },
+  "dependencies": {
+    "tldts": "7.5.5"
   }
 }
