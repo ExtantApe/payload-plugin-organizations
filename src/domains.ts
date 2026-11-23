@@ -118,7 +118,7 @@ export async function matchOrganizations(
   const fresh = (await payload.findByID({ collection: s.users as never, id: userId, depth: 0, overrideAccess: true }).catch(() => null)) as { email?: unknown; _verified?: unknown } | null
   if (!fresh || (fresh._verified !== true && options.assumeVerified !== true)) return []
   const domain = domainOf(fresh.email)
-  if (userId === null || !domain || isGenericDomain(domain, s.genericDomains)) return []
+  if (!domain || isGenericDomain(domain, s.genericDomains)) return []
   const candidates = withParents(domain)
   const found = await payload.find({
     collection: ORGANIZATIONS as never,

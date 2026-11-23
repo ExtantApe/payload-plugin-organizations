@@ -404,6 +404,7 @@ describe('approving through a second account', () => {
     answers.canInvite = () => true
     const pend = await propose(cy, { name: 'Member Approver Zoo' })
     await invite(cy, pend.id, { user: ann.id, level: 'member' })
+    await change(bea, (await rowOf(pend.id, ann)).id, { status: 'active' })
     expect(await refused(change(ann, (await rowOf(pend.id, cy)).id, { status: 'active' }))).toMatch(/made or belong to/)
     expect((await orgRow(pend.id)).status).toBe('pending')
   })
@@ -488,12 +489,33 @@ describe('a level change on an active row', () => {
   })
 })
 
+describe('invitations can’t lock approvers out', () => {
+  it('lets every approver still approve and close after a coordinator invited them all and they declined', async () => {
+    answers.canPrecreate = () => false
+    answers.canInvite = () => true
+    const pend = await propose(cy, { name: 'Decline Zoo' })
+    for (const a of [ann, bea]) {
+      await invite(cy, pend.id, { user: a.id, level: 'member' })
+      await change(a, (await rowOf(pend.id, a)).id, { status: 'removed' })
+    }
+    await invite(cy, pend.id, { user: eli.id, level: 'member' })
+    // An invitation nobody accepted doesn't count, for the invited or the declined.
+    await change(ann, (await rowOf(pend.id, cy)).id, { status: 'active' })
+    expect((await orgRow(pend.id)).status).toBe('active')
+    await editOrg(bea, pend.id, { domains: ['decline-zoo.org'] })
+    await editOrg(ann, pend.id, { status: 'closed' })
+    expect((await orgRow(pend.id)).status).toBe('closed')
+  })
+})
+
 describe('approving after leaving', () => {
   it('counts a removed row, so an approver can’t leave, approve and be invited back', async () => {
     answers.canPrecreate = () => false
     answers.canInvite = () => true
     const pend = await propose(cy, { name: 'Leave And Return Zoo' })
     await invite(cy, pend.id, { user: ann.id, level: 'member' })
+    // Bea (an approver outside it) activates Ann's row, so Ann has accepted a place. Then Ann leaves.
+    await change(bea, (await rowOf(pend.id, ann)).id, { status: 'active' })
     await change(ann, (await rowOf(pend.id, ann)).id, { status: 'removed' })
     expect(await refused(change(ann, (await rowOf(pend.id, cy)).id, { status: 'active' }))).toMatch(/made or belong to/)
     expect((await orgRow(pend.id)).status).toBe('pending')

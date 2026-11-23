@@ -162,12 +162,14 @@ describe('status', () => {
     expect((await events()).map((e) => e.event)).toEqual(expect.arrayContaining(['close', 'reopen']))
   })
 
-  it('refuses to reopen for someone who belongs to it, even an approver', async () => {
+  it('refuses to reopen for someone who belongs to it, even an approver, but lets them close it', async () => {
     const org = await liveOrg(cy, ann)
     await join(org.id, cy, bea, 'member')
-    // bea is an approver, but she is in the organization, so she can’t close it
-    expect(await refused(editOrg(bea, org.id, { status: 'closed' }))).toMatch(/made or belong/)
-    expect((await orgRow(org.id)).status).toBe('active')
+    // bea is an approver in the organization: closing takes access away, so she may; reopening gives it back, so she may not
+    await editOrg(bea, org.id, { status: 'closed' })
+    expect((await orgRow(org.id)).status).toBe('closed')
+    expect(await refused(editOrg(bea, org.id, { status: 'active' }))).toMatch(/made or belong/)
+    expect((await orgRow(org.id)).status).toBe('closed')
   })
 
   it('allows no changes, invitations or acceptances in a closed organization', async () => {
@@ -306,6 +308,21 @@ describe('reopening', () => {
     expect((await rowOf(org.id, dee)).status).toBe('invited')
     expect((await events()).filter((e) => e.event === 'remove')).toEqual([])
     expect(await refused(change(kid, (await rowOf(org.id, kid)).id, { status: 'active' }))).toMatch(/Not available/)
+  })
+})
+
+describe('closing', () => {
+  it('lets an approver who belongs to the organization close it, but not reopen it or widen it', async () => {
+    const org = await liveOrg(cy, ann)
+    await join(org.id, cy, bea, 'viewer')
+    expect(await refused(editOrg(bea, org.id, { domains: ['made-up-zoo.org'] }))).toMatch(/made or belong to/)
+    await editOrg(bea, org.id, { status: 'closed' })
+    expect((await orgRow(org.id)).status).toBe('closed')
+    expect(await refused(editOrg(bea, org.id, { status: 'active' }))).toMatch(/made or belong to/)
+    await editOrg(ann, org.id, { status: 'active' })
+    expect((await orgRow(org.id)).status).toBe('active')
+    // Closing and widening in one change still counts as widening.
+    expect(await refused(editOrg(bea, org.id, { status: 'closed', domains: ['made-up-zoo.org'] }))).toMatch(/made or belong to/)
   })
 })
 
