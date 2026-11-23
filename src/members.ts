@@ -69,6 +69,7 @@ export function membersCollection(s: Resolved, opts: OrganizationsOptions): Coll
         collection: MEMBERS as never,
         where: { and: [{ organization: { equals: organization } }, { status: { equals: 'active' } }, { level: { equals: 'coordinator' } }, { id: { not_equals: leaving } }] },
         limit: 1,
+        pagination: false,
         depth: 0,
         overrideAccess: true,
         req,
@@ -177,6 +178,7 @@ export function membersCollection(s: Resolved, opts: OrganizationsOptions): Coll
               collection: MEMBERS as never,
               where: { and: [{ organization: { equals: organization.id } }, { user: { equals: userId } }, { status: { in: LIVE } }] },
               limit: 1,
+              pagination: false,
               depth: 0,
               overrideAccess: true,
               req,
@@ -184,7 +186,7 @@ export function membersCollection(s: Resolved, opts: OrganizationsOptions): Coll
             if (dup.docs.length) {
               // Say so plainly only to someone who can already see that row.
               if (trusted) throw refuse('That person is already in this organization.')
-              const seen = await req.payload.find({ collection: MEMBERS as never, where: { id: { equals: dup.docs[0]!.id } } as never, limit: 1, depth: 0, overrideAccess: false, req }).catch(() => null)
+              const seen = await req.payload.find({ collection: MEMBERS as never, where: { id: { equals: dup.docs[0]!.id } } as never, limit: 1, pagination: false, depth: 0, overrideAccess: false, req }).catch(() => null)
               throw seen?.docs.length ? refuse('That person is already in this organization.') : cannot()
             }
             const subject = await req.payload.count({ collection: s.users as never, where: { id: { equals: userId } } as never, overrideAccess: true, req }).catch(() => null)
