@@ -6,6 +6,13 @@ let ann: U, cy: U, dee: U, eli: U, fay: U
 let org: { id: string | number }
 const original = () => state.payload.db.beginTransaction
 let begin: typeof state.payload.db.beginTransaction
+const marker = async (p: Promise<unknown>) => {
+  // The shape review tools such as whitehat accept as a refusal: a 403 whose data is exactly { refusal: 'transactions-required' }.
+  const e = (await p.then(() => null, (err: unknown) => err)) as { status?: unknown; data?: unknown } | null
+  expect(e?.status).toBe(403)
+  expect(e?.data).toEqual({ refusal: 'transactions-required' })
+  expect(Object.getPrototypeOf(e?.data)).toBe(Object.prototype)
+}
 
 beforeAll(start, 180_000)
 afterAll(stop)
@@ -41,6 +48,13 @@ describe('a database that stops handing out transactions after start-up', () => 
     state.payload.db.beginTransaction = begin
     expect(await counts()).toEqual(before)
     expect(await rowOf(org.id, dee)).toBeUndefined()
+  })
+
+  it('refuses with the transactions-required marker, over the Local API and with disableTransaction', async () => {
+    noTransactions()
+    await marker(invite(cy, org.id, { user: dee.id, level: 'member' }))
+    state.payload.db.beginTransaction = begin
+    await marker(state.payload.create({ collection: 'organization-members' as never, data: { organization: org.id, user: dee.id, level: 'viewer' } as never, overrideAccess: true, disableTransaction: true }))
   })
 
   it('refuses accept, level change and removal, and leaves each row as it was', async () => {
