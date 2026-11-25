@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 (2026-11-24)
 
 ### Fixed
 
@@ -10,18 +10,16 @@
 - The lock is now taken only after every refusal and the veto have passed, right before the write. Before, it was taken first, so a Coordinator sending harmless changes while a vetoed minor accepted saw "just changed by someone else" and then an unchanged row, which told them the minor was covered by the veto. A refused change now never touches the row, so it also no longer bumps `updatedAt` (seen with `allowWithoutTransactions: true`). The conflict matcher no longer maps a bare `TransientTransactionError` label or a message that only says "write conflict" to that refusal; other faults now show as the faults they are.
 - Tested: 5 new tests (136 in all; typecheck and leak check clean, full suite run twice): the matcher refuses the label alone, message-only and wrong-type codes; refused changes (a vetoed accept over the Local API and REST, an unknown level, a bad status, an attempt to change the organization) make no lock write and leave the whole row, `updatedAt` included, unchanged; an allowed change makes one; a Coordinator's no-op change while a vetoed minor accepts gets the same answer as with nothing running, 12 rounds each over the Local API and REST. Four of them fail on the previous code. Not tested: `allowWithoutTransactions: true` itself (the `updatedAt` bump came from the lock write, which the call counts cover), a live site, GraphQL for this race, and a conflict from a database other than MongoDB.
 
+- Every write the plugin guards now refuses cleanly when the database hands back no transaction, or when server code passes `disableTransaction`, and writes nothing. Before, only the start-up check looked, so a database that began answering with no transaction later still let an invitation through. The check runs first in the change hook of organizations, memberships and history rows, with a message saying the change needs a transaction. `allowWithoutTransactions: true` turns it off along with the start-up check.
+- A level change that the veto refuses on an active row read the same as any other refused change to the changer; the level-dependent tell this left is fixed by the promotion offer under Breaking.
+- Tested: 6 new tests with `beginTransaction` stubbed to answer null after start-up: invite, accept, level change, removal, new organization, edit, close, server-code writes, a history row on its own and `disableTransaction` are refused with no rows or events added, and the same calls work once transactions return (112 tests in all; typecheck and leak check clean). Not tested: a real adapter that loses transactions mid-run, and a live site.
+
 ### Breaking
 
 - A promotion of an active member is now an offer. The row keeps its level and gets a new `pendingLevel` field; the person accepts by sending the new level themselves, or declines by sending `pendingLevel: null`. Anyone `canChangeLevel` allows can withdraw it the same way. Before, a Coordinator who promoted someone the host's veto refused got a 403 with no history row, while promoting anyone else worked, which told them who the veto covers (for example a minor). Now the veto runs only when the person accepts, and the promoter sees the same answer, row, history and audit calls for everyone. A demotion still takes effect at once and no longer asks the veto. Two new history events and audit events, `offer-level` and `cancel-level`, record an offer and its withdrawal; `change-level` is recorded when the person accepts. Server code with no signed-in user still promotes at once and sees the veto's reason. Hosts that listed or counted `change-level` events or relied on an immediate promotion need to change.
 - `allowWithoutTransactions` must be exactly `true`, `false` or left out. Any other value stops the plugin from starting with an error. Before, it kept the guard on without saying so.
 - README and test audit: a wrong level name is fixed (this plugin's levels are Coordinator, Member and Viewer).
 - Tested: 14 new tests (126 in all; typecheck and leak check clean, full suite run twice): an adult promotion against a vetoed minor promotion compared field by field from the promoter's side over the Local API, REST and GraphQL (status, body, row, history rows, counts, audit calls); accept, refused accept, decline, withdraw, direct set, demotion and removal clearing an offer; server-code promotion; `allowWithoutTransactions: true` lets writes through; audit hooks silent on a refusal; `disableTransaction` refused on update; the option check. Test databases are stopped and their temp folders removed in a `finally`. Not tested: timing of the promoter's reply (the veto is not called on that path, so no clock test), a live site, the admin screens in a browser, and a person working out from a pending offer that stays pending for a long time.
-
-## 0.1.1 (unreleased)
-
-- Every write the plugin guards now refuses cleanly when the database hands back no transaction, or when server code passes `disableTransaction`, and writes nothing. Before, only the start-up check looked, so a database that began answering with no transaction later still let an invitation through. The check runs first in the change hook of organizations, memberships and history rows, with a message saying the change needs a transaction. `allowWithoutTransactions: true` turns it off along with the start-up check.
-- A level change that the veto refuses on an active row read the same as any other refused change to the changer; the level-dependent tell this left is fixed in Unreleased above.
-- Tested: 6 new tests with `beginTransaction` stubbed to answer null after start-up: invite, accept, level change, removal, new organization, edit, close, server-code writes, a history row on its own and `disableTransaction` are refused with no rows or events added, and the same calls work once transactions return (112 tests in all; typecheck and leak check clean). Not tested: a real adapter that loses transactions mid-run, and a live site.
 
 ## 0.1.0 (2026-11-23)
 
