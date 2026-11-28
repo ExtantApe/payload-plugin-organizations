@@ -1,6 +1,6 @@
 import { mongooseAdapter } from '@payloadcms/db-mongodb'
 import { MongoMemoryReplSet } from 'mongodb-memory-server'
-import { buildConfig, getPayload, handleEndpoints, type Payload } from 'payload'
+import { buildConfig, getPayload, handleEndpoints, type Config, type Payload } from 'payload'
 
 import { organizationField, organizations, type AuditEvent } from '../src/index.js'
 
@@ -18,6 +18,43 @@ export const answers: Record<string, ((...a: never[]) => unknown) | undefined> =
 
 const staff = (user: unknown) => (user as { staff?: boolean }).staff === true
 const pick = (name: string, fallback: (a: never) => unknown) => (a: never) => (answers[name] ? answers[name]!(a) : fallback(a))
+
+/** What a later plugin's hooks saw, for the hook-order tests. */
+export const late: { sawKeys: string[][] } = { sawKeys: [] }
+
+/**
+ * A plugin installed after this one: it adds its own collection and global, puts a hook in front of `beforeOperation`
+ * and one at the end of `beforeChange` on `places`, as a plugin that knows nothing of the guard might. The `beforeChange`
+ * hook adds a non-plain field name only when a test asks for it through `req.context`.
+ */
+const latePlugin = (config: Config): Config => ({
+  ...config,
+  collections: [
+    ...(config.collections ?? []).map((c) =>
+      c.slug !== 'places'
+        ? c
+        : {
+            ...c,
+            hooks: {
+              ...c.hooks,
+              beforeOperation: [
+                ({ args }: { args: { data?: unknown } }) => {
+                  if (args.data && typeof args.data === 'object') late.sawKeys.push(Object.keys(args.data))
+                  return args
+                },
+                ...(c.hooks?.beforeOperation ?? []),
+              ],
+              beforeChange: [
+                ...(c.hooks?.beforeChange ?? []),
+                ({ data, req }: { data: Record<string, unknown>; req: { context: Record<string, unknown> } }) => (req.context.addOperator ? { ...data, $max: { title: 'zzz' } } : data),
+              ],
+            },
+          },
+    ) as never,
+    { slug: 'late-notes', fields: [{ name: 'text', type: 'text' }, { name: 'flag', type: 'text' }] },
+  ],
+  globals: [...(config.globals ?? []), { slug: 'late-settings', fields: [{ name: 'text', type: 'text' }] }],
+})
 
 export async function start() {
   state.mongo = await MongoMemoryReplSet.create({ replSet: { count: 1, storageEngine: 'wiredTiger' } })
@@ -40,6 +77,8 @@ export async function start() {
       { slug: 'admins', auth: true, fields: [] },
       { slug: 'places', fields: [{ name: 'title', type: 'text' }, organizationField({ name: 'organization' }), organizationField({ name: 'lab', kinds: ['lab'] })] },
     ],
+    // A made-up global, so the field-name guard is tested on globals too.
+    globals: [{ slug: 'site-settings', fields: [{ name: 'motto', type: 'text' }, { name: 'owner', type: 'text' }] }],
     plugins: [
       organizations({
         kinds: [{ value: 'zoo' }, { value: 'lab' }, { value: 'university', label: 'University' }, { value: 'business' }],
@@ -81,6 +120,7 @@ export async function start() {
           },
         },
       }),
+      latePlugin,
     ],
   })
   state.payload = await getPayload({ config })
@@ -100,7 +140,7 @@ type Raw = { collections: Record<string, { deleteMany: (f: object) => Promise<un
 /** The plugin's collections can't be deleted through Payload, so each test empties its own database directly. */
 export async function wipe() {
   const { payload } = state
-  for (const c of ['organization-events', 'organization-members', 'organizations', 'places']) await (payload.db as unknown as Raw).collections[c]!.deleteMany({})
+  for (const c of ['organization-events', 'organization-members', 'organizations', 'places', 'late-notes']) await (payload.db as unknown as Raw).collections[c]!.deleteMany({})
   for (const c of ['users', 'admins']) await payload.delete({ collection: c as never, where: { id: { exists: true } }, overrideAccess: true })
 }
 

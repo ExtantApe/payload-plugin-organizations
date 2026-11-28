@@ -2,6 +2,12 @@
 
 Kept by this repo's owning session, per `~/Code/CLAUDE.md`, "Test self-audits". Newest first.
 
+## 2026-11-28: tests for plain field names, invitations and duplicated records
+
+- Covered: `test/field-names.test.ts` (13 tests, 224 in all) now covers the promises in the entry below. Plain field names on the plugin's collections, the host's collections, a collection and a global added by a later plugin, and the host's global: create, update by id, bulk update, duplicate and global update, over the Local API with and without access checks, and over REST. A leading dollar sign, a dotted key, a NUL key and data that isn't an object are refused, plain data still saves, and the check also applies to what a later hook adds. A new or duplicated membership has no pending level. The picker checks a duplicated record in full, and the original still saves.
+- Changed: `test/setup.ts` adds a made-up global and a made-up later plugin (one collection, one global and two hooks on `places`).
+- Gaps skipped: GraphQL (its inputs are limited to the schema's field names); join fields; the admin screens (no browser test yet); a live site.
+
 ## 2026-11-28: plain field names, invitations and duplicated records
 
 - Promises added: every collection and global refuses a save with a top-level key that isn't a plain field name, or with data that isn't an object, for every caller; a `pendingLevel` sent with a new invitation is dropped; the picker checks a duplicated record as it checks a new one.

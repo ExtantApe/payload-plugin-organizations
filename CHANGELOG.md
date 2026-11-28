@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Tests only, with no change to the package: 13 tests in `test/field-names.test.ts` cover plain field names in saves, pending levels on new and duplicated memberships, and the picker on duplicated records. Tested: typecheck, build and leak check clean, and all 224 tests pass, full suite run twice, on Payload 3.92.1 and an in-memory MongoDB replica set. Not tested: a live site.
+
 ## 0.4.0 (2026-11-28)
 
 > **Check before upgrading: Payload 3.92.1 or newer.** The plugin now needs `payload` ^3.92.1 (it was ^3.80.0). If your site is on an older Payload, upgrade Payload first. Only 3.92.1 is tested.
