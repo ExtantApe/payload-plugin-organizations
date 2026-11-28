@@ -2,6 +2,13 @@
 
 Kept by this repo's owning session, per `~/Code/CLAUDE.md`, "Test self-audits". Newest first.
 
+## 2026-11-27: read limits on writes
+
+- Promises added: an access-checked update of an organization or membership needs read access under the plugin's rule and the host's; a person can decline, or try to accept, their own hidden invitation by sending that status alone, and gets no document back.
+- Covered: `test/write-limits.test.ts` (38 tests, 193 in all). A stranger and a refused minor across Local (depth 0 to 2), REST and GraphQL updates, plus duplicate and delete, with GraphQL refusals checked to come from execution and not the schema. Server code that passes a user with access checks off. Decline and accept on a hidden row, including a veto whose quiet answer refuses while the real one allows. Extra fields, other people's rows, organizations, declined, active and removed rows. Create answers for people who can't read the result. Coordinators, staff and members who may write. Host read rules that are wider, narrower, throwing or returning odd values.
+- Changed: `test/guard.test.ts` leaves the quiet veto question out of its silent-log check, because access rules ask it before the transaction guard runs. It still expects no audit hook and no real veto call.
+- Gaps skipped: join fields (the plugin adds none); versions and restore (no collection has them); the admin screens (no browser test yet); host collections that populate memberships through their own writes; a live site.
+
 ## 2026-11-27: what an invited account can read
 
 - Promises added: until a person accepts, the organization, its name and who invited them are shown only if the veto would let them accept, in reads and in what their own writes send back; they can still decline; anything but a clear allow in two seconds hides them; the inviter's side is unchanged; Payload's document locks are off for the plugin's collections.

@@ -1,4 +1,4 @@
-import { APIError, type PayloadRequest } from 'payload'
+import { type Access, APIError, type PayloadRequest, type Where } from 'payload'
 
 import { type Level, MEMBERS, ORGANIZATIONS, RANK, type Resolved } from './types.js'
 
@@ -125,4 +125,26 @@ export async function organizationsOf(req: PayloadRequest, options: { atLeast?: 
   }
   const need = options.atLeast ? RANK[options.atLeast] : 0
   return [...best.values()].filter((o) => RANK[o.level] >= need)
+}
+
+const limit = async (rule: Access, req: PayloadRequest, id: string | number): Promise<boolean | Where> => {
+  try {
+    const result: unknown = await rule({ req, id })
+    if (result === true) return true
+    return typeof result === 'object' && result !== null && !Array.isArray(result) ? (result as Where) : false
+  } catch {
+    return false
+  }
+}
+
+/** A write answers with the document, so writing one takes reading it too: by the plugin's own rule and by the rule the collection ends up with, in case the host changed it. Anything unclear is a no. */
+export async function readLimit(slug: string, own: Access, req: PayloadRequest, id: string | number): Promise<boolean | Where> {
+  const configured = (req.payload.collections as unknown as Record<string, { config: { access: { read?: Access } } } | undefined>)[slug]?.config.access.read
+  const first = await limit(own, req, id)
+  if (first === false || !configured) return false
+  if (configured === own) return first
+  const second = await limit(configured, req, id)
+  if (second === false) return false
+  if (first === true) return second
+  return second === true ? first : { and: [first, second] }
 }
