@@ -1,11 +1,13 @@
 import type { Config, Payload, Plugin } from 'payload'
 
+import { guardCollection, guardGlobal, placeEverywhere } from './guard.js'
 import { eventsCollection, membersCollection } from './members.js'
 import { organizationsCollection } from './organizations.js'
 import type { OrganizationsOptions, Resolved } from './types.js'
 
 export { GENERIC_DOMAINS, domainOf, isGenericDomain, isPublicSuffix, matchOrganizations, normalizeDomain, type DomainMatch } from './domains.js'
 export { organizationField, type OrganizationFieldOptions } from './field.js'
+export { BAD_KEY_MESSAGE } from './guard.js'
 export { levelIn, organizationsOf } from './helpers.js'
 export { normalizeRor } from './organizations.js'
 export * from './types.js'
@@ -55,8 +57,11 @@ export const organizations =
       custom: { ...config.custom, organizations: resolved },
       onInit: async (payload) => {
         await config.onInit?.(payload)
+        placeEverywhere(payload)
         await checkTransactions(payload, options.allowWithoutTransactions === true)
       },
-      collections: [...(config.collections ?? []), organizationsCollection(resolved, options), membersCollection(resolved, options), eventsCollection(resolved, options)],
+      // Every collection and global gets the field-name guard, the host's included: see guard.ts.
+      collections: [...(config.collections ?? []), organizationsCollection(resolved, options), membersCollection(resolved, options), eventsCollection(resolved, options)].map(guardCollection),
+      globals: (config.globals ?? []).map(guardGlobal),
     }
   }

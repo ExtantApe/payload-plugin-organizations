@@ -223,6 +223,7 @@ export function membersCollection(s: Resolved, opts: OrganizationsOptions): Coll
             data.acceptedAt = null
             data.removedAt = null
             data.removedBy = null
+            data.pendingLevel = null
             if (me) data.invitedBy = me.id
             else delete data.invitedBy
             const dup = await req.payload.find({

@@ -2,6 +2,12 @@
 
 Kept by this repo's owning session, per `~/Code/CLAUDE.md`, "Test self-audits". Newest first.
 
+## 2026-11-28: plain field names, invitations and duplicated records
+
+- Promises added: every collection and global refuses a save with a top-level key that isn't a plain field name, or with data that isn't an object, for every caller; a `pendingLevel` sent with a new invitation is dropped; the picker checks a duplicated record as it checks a new one.
+- Covered: the 211 tests in this repo pass. The promises above are untested by this repo's suite. 13 further tests, not in this repo, passed locally along with it.
+- Not tested: a live site.
+
 ## 2026-11-27: approvers and read access (0.3.0)
 
 - Promise documented: with access checks on, `canApprove` alone isn't enough to activate, approve, close, reopen or change a ROR id or domains. The person also needs read access to the organization, or to the membership row when they activate a person.
