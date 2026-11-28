@@ -1,6 +1,6 @@
 {
   "name": "@extantape/payload-plugin-organizations",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Organizations for Payload: places people work or belong, with Coordinator, Member and Viewer levels, pending organizations a host approves, a shipped list of public mail domains, and a picker field. Access rules are the host's.",
   "keywords": [
     "payload",
@@ -47,7 +47,7 @@
     "prepublishOnly": "npm run typecheck && npm test"
   },
   "peerDependencies": {
-    "payload": "^3.80.0"
+    "payload": "^3.92.1"
   },
   "devDependencies": {
     "@payloadcms/db-mongodb": "3.92.1",

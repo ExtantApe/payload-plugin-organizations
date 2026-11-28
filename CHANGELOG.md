@@ -1,7 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 (2026-11-28)
 
+> **Check before upgrading: Payload 3.92.1 or newer.** The plugin now needs `payload` ^3.92.1 (it was ^3.80.0). If your site is on an older Payload, upgrade Payload first. Only 3.92.1 is tested.
+>
 > **Check before upgrading: field names in saves, and duplicated records.** Every collection and global in your config, not only the plugin's, refuses a save whose data has a top-level key that isn't a plain field name, such as a dotted one. This applies to server code too, `overrideAccess` included. The refusal is a 400 with a public message, exported as `BAD_KEY_MESSAGE`. If your own code saves a group field as `{ 'group.field': value }`, send `{ group: { field: value } }`. Check your server writes, and your collection and global hooks, for keys like this. Duplicating a record whose organization picker points at a closed, pending or wrong-kind organization, or with access checks on one the person can't read, is refused with the picker's validation error: `That organization isn’t active.` or `That kind of organization isn’t allowed here.` The original still saves.
 
 ### Changed

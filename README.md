@@ -36,6 +36,8 @@ Everything else is the host's call, and every host hook fails closed: only an ex
 
 ## Install and set up
 
+Needs Payload 3.92.1 or newer.
+
 ```
 npm install @extantape/payload-plugin-organizations
 ```
