@@ -2,6 +2,26 @@
 
 Kept by this repo's owning session, per `~/Code/CLAUDE.md`, "Test self-audits". Newest first.
 
+## 2026-11-27: approvers and read access (0.3.0)
+
+- Promise documented: with access checks on, `canApprove` alone isn't enough to activate, approve, close, reopen or change a ROR id or domains. The person also needs read access to the organization, or to the membership row when they activate a person.
+- Before: staff, who can read everything in the test site, were shown approving. No test had an approver without read access.
+- Added: `test/write-limits.test.ts`, "an approver and read access" (18 tests, 211 in all). One approver who isn't staff or a member, with only `canRead` changing. Activating a first Coordinator, approving, closing, reopening, a ROR id and domains: refused on every update path with nothing changed, then allowed once they can read. All 18 fail when run against the 0.2.0 source.
+- Gaps skipped: an approver whose read access comes from their own membership (the existing tests of Coordinators and members cover that read rule); a host that scopes read access to some organizations only (the existing narrower and wider read rule tests cover how the two rules combine); the admin screens; a live site.
+
+## 2026-11-27: read limits on writes
+
+- Promises added: an access-checked update of an organization or membership needs read access under the plugin's rule and the host's; a person can decline, or try to accept, their own hidden invitation by sending that status alone, and gets no document back.
+- Covered: `test/write-limits.test.ts` (38 tests, 193 in all). A stranger and a refused minor across Local (depth 0 to 2), REST and GraphQL updates, plus duplicate and delete, with GraphQL refusals checked to come from execution and not the schema. Server code that passes a user with access checks off. Decline and accept on a hidden row, including a veto whose quiet answer refuses while the real one allows. Extra fields, other people's rows, organizations, declined, active and removed rows. Create answers for people who can't read the result. Coordinators, staff and members who may write. Host read rules that are wider, narrower, throwing or returning odd values.
+- Changed: `test/guard.test.ts` leaves the quiet veto question out of its silent-log check, because access rules ask it before the transaction guard runs. It still expects no audit hook and no real veto call.
+- Gaps skipped: join fields (the plugin adds none); versions and restore (no collection has them); the admin screens (no browser test yet); host collections that populate memberships through their own writes; a live site.
+
+## 2026-11-27: what an invited account can read
+
+- Promises added: until a person accepts, the organization, its name and who invited them are shown only if the veto would let them accept, in reads and in what their own writes send back; they can still decline; anything but a clear allow in two seconds hides them; the inviter's side is unchanged; Payload's document locks are off for the plugin's collections.
+- Covered: `test/invited-view.test.ts` (18 tests, 155 in all). Writes to their own row: a no-op change, a decline (which still takes effect) and a no-op on a declined or withdrawn invitation, over the Local API and REST at depth 0 and 1 and over GraphQL, with the allowed invitee and the inviter still getting the full row. Lock settings on all three collections. Every read path an invited account has with `overrideAccess: false`: find and findByID at depth 0 to 2 on organizations, memberships and history, sorting on name and inviter, a nested name filter, `select`, populated relationships from a host collection, REST lists, single documents and counts, GraphQL, `levelIn` and `organizationsOf`, and the picker. Filters with right and wrong guesses count the same. Withdrawn and declined invitations. Accept still refused, decline still works. Allowed invitee, inviter (same shapes over the Local API and REST, no veto call), Coordinator, active member, staff and a pending organization's maker. Fail closed on throw, rejection, wrong answers, timeout and a veto reading the same collections.
+- Gaps skipped: versions and drafts (none of the plugin's collections has them); `matchOrganizations` (it already runs the veto and needs no invitation); the admin screens (no browser test yet); timing on the inviter's side (no veto call on that path, so no clock test); `refuseMember: false` (the test site has one config; that branch shows the details, as before); a veto that answers differently on `preview` (a host contract in the README, which code can't check); a separate test for each write field such as `pendingLevel` (one rule on every returned document covers them, and the tests prove it on three kinds of write).
+
 ## 2026-11-23: the row lock as an oracle
 
 - Promise added: a refused change never touches a membership row, and the lock write comes only after every refusal and the veto, so a Coordinator's changes can't show whether a vetoed minor is accepting at the same moment. The conflict matcher maps only the database's write-conflict code to the someone-else refusal.

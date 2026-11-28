@@ -118,7 +118,8 @@ describe('a database that stops handing out transactions after start-up', () => 
     await refused(editOrg(cy, org.id, { name: 'Renamed' }))
     await refused(propose(fay))
     state.payload.db.beginTransaction = begin
-    expect(log).toEqual([])
+    // Working out who may read a row can ask the veto's quiet question, which has no side effects. Nothing else is called.
+    expect(log.filter((l) => !l.startsWith('veto-preview:'))).toEqual([])
   })
 
   it('refuses disableTransaction on update and delete as well as create', async () => {

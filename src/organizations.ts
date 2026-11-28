@@ -1,8 +1,9 @@
-import type { CollectionConfig, PayloadRequest } from 'payload'
+import type { Access, CollectionConfig, PayloadRequest } from 'payload'
 
 import { isGenericDomain, isPublicSuffix, normalizeDomain } from './domains.js'
 import { vetoed } from './veto.js'
-import { asInternal, exactlyTrue, idOf, isInternal, levelIn, needTransaction, refuse, signedIn } from './helpers.js'
+import { hiddenOwnRows } from './view.js'
+import { asInternal, exactlyTrue, idOf, isInternal, levelIn, needTransaction, refuse, signedIn, readLimit } from './helpers.js'
 import {
   EVENTS,
   MEMBERS,
@@ -146,8 +147,33 @@ export function organizationsCollection(s: Resolved, opts: OrganizationsOptions)
     return value.trim()
   }
 
+  const read: Access = async ({ req }) => {
+    const user = signedIn(req, s)
+    if (!user) return false
+    try {
+      if (opts.canRead && (await exactlyTrue(() => opts.canRead!({ req, user })))) return true
+      const mine = await req.payload.find({
+        collection: MEMBERS as never,
+        where: { and: [{ user: { equals: user.id } }, { status: { in: ['invited', 'active'] } }] } as never,
+        pagination: false,
+        depth: 0,
+        overrideAccess: true,
+        req,
+      })
+      // An invitation never accepted shows its organization only to someone the veto would let accept it, so it can't carry a message to an account the site refuses.
+      const hidden = new Set((await hiddenOwnRows(req, s, opts, user.id)).map(String))
+      const visible = (mine.docs as unknown as { id: unknown; organization: unknown }[]).filter((r) => !hidden.has(String(r.id)))
+      const ids = [...new Set(visible.map((r) => idOf(r.organization)).filter((x): x is string | number => x !== null))]
+      return ids.length ? { id: { in: ids } } : false
+    } catch {
+      return false
+    }
+  }
+
   return {
     slug: ORGANIZATIONS,
+    // No Payload edit-lock rows for these documents; the plugin's own checks handle two changes at once.
+    lockDocuments: false,
     labels: { singular: 'Organization', plural: 'Organizations' },
     admin: {
       group: opts.adminGroup ?? 'Organizations',
@@ -157,27 +183,9 @@ export function organizationsCollection(s: Resolved, opts: OrganizationsOptions)
     },
     access: {
       create: ({ req }) => !!signedIn(req, s),
-      update: ({ req, id }) => id !== undefined && id !== null && !!signedIn(req, s),
+      update: async ({ req, id }) => id !== undefined && id !== null && !!signedIn(req, s) && (await readLimit(ORGANIZATIONS, read, req, id)),
       delete: () => false,
-      read: async ({ req }) => {
-        const user = signedIn(req, s)
-        if (!user) return false
-        try {
-          if (opts.canRead && (await exactlyTrue(() => opts.canRead!({ req, user })))) return true
-          const mine = await req.payload.find({
-            collection: MEMBERS as never,
-            where: { and: [{ user: { equals: user.id } }, { status: { in: ['invited', 'active'] } }] } as never,
-            pagination: false,
-            depth: 0,
-            overrideAccess: true,
-            req,
-          })
-          const ids = [...new Set((mine.docs as unknown as { organization: unknown }[]).map((r) => idOf(r.organization)).filter((x): x is string | number => x !== null))]
-          return ids.length ? { id: { in: ids } } : false
-        } catch {
-          return false
-        }
-      },
+      read,
     },
     fields: [
       { name: 'name', type: 'text', required: true, maxLength: NAME_MAX, index: true },
@@ -297,7 +305,11 @@ export function organizationsCollection(s: Resolved, opts: OrganizationsOptions)
           const notesChanged = 'privateNotes' in sent && sent.privateNotes !== (originalDoc.privateNotes ?? undefined) && sent.privateNotes !== (originalDoc.privateNotes ?? null)
           const widened = next.rorId !== before.rorId || !same(next.domains, before.domains)
           const statusChanged = next.status !== before.status
-          if (!nameChanged && !notesChanged && !widened && !statusChanged) return data
+          if (!nameChanged && !notesChanged && !widened && !statusChanged) {
+            // A save that changes nothing still answers with the document, so it takes someone the host lets change it.
+            if (!trusted && !(await ask(opts.canUpdate, req, before, { ...next }, id)) && !(await ask(opts.canApprove, req, before, { ...next }, id))) throw refuse('You can’t change this organization.')
+            return data
+          }
           if (before.status === 'closed' && !statusChanged) throw refuse('A closed organization can’t be changed. Reopen it first.')
           const args = { ...next, id }
           const patch = { ...next }

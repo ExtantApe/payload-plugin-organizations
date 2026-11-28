@@ -61,10 +61,13 @@ export async function start() {
         }) as never,
         canSeePrivate: pick('canSeePrivate', ({ user }: { user: unknown }) => staff(user)) as never,
         canRead: pick('canRead', ({ user }: { user: unknown }) => staff(user)) as never,
-        refuseMember: ({ subject, action, organization, userId }) => {
-          seen.push({ organization, user: userId })
-          log.push(`veto:${action}`)
-          if (answers.refuse) return answers.refuse(undefined as never) as string | null
+        refuseMember: (args) => {
+          const { subject, action, organization, userId } = args
+          // A quiet check made while the invited person reads is logged apart, so tests about the veto at accept keep their meaning.
+          const preview = (args as { preview?: boolean }).preview === true
+          if (!preview) seen.push({ organization, user: userId })
+          log.push(preview ? `veto-preview:${action}` : `veto:${action}`)
+          if (answers.refuse) return answers.refuse(args as never) as string | null
           return (subject as { minor?: boolean }).minor ? 'Not available for this account.' : null
         },
         audit: {
