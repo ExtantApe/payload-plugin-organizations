@@ -34,6 +34,18 @@ Rules the plugin enforces itself, for server code as well as for clients:
 
 Everything else is the host's call, and every host hook fails closed: only an exact `true` allows. With no hooks, nobody can do anything.
 
+## On its own, and with others
+
+**On its own:** Organizations needs only Payload and a database with transactions. It keeps its settings on `config.custom.organizations` and doesn't depend on any other plugin.
+
+**Needs:** Payload `^3.92.1` as a peer dependency. No other EXTANT APE plugin is required.
+
+**Works with:**
+- **Sharing:** add `organizations` to Sharing's `memberTypes`, and an organization can be a member of a share group. Sharing's `identities` and `peopleOf` are yours to write, and they can read this plugin's members, for example with `organizationsOf`. Neither plugin imports the other.
+- **Positions:** a grant's scope is a kind and an id that you define, so a scope kind can be one of these organizations.
+
+**Color Theory:** none needed. Its collections and picker field use Payload's own admin components, which take Color Theory's admin colors when its `applyToAdmin` option is on.
+
 ## Install and set up
 
 Needs Payload 3.92.1 or newer.
