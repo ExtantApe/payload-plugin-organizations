@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+> **Check before upgrading: field names in saves, and duplicated records.** Every collection and global in your config, not only the plugin's, refuses a save whose data has a top-level key that isn't a plain field name, such as a dotted one. This applies to server code too, `overrideAccess` included. The refusal is a 400 with a public message, exported as `BAD_KEY_MESSAGE`. If your own code saves a group field as `{ 'group.field': value }`, send `{ group: { field: value } }`. Check your server writes, and your collection and global hooks, for keys like this. Duplicating a record whose organization picker points at a closed, pending or wrong-kind organization, or with access checks on one the person can't read, is refused with the picker's validation error: `That organization isn’t active.` or `That kind of organization isn’t allowed here.` The original still saves.
+
+### Changed
+
+- The field name rule applies to create, update by id, bulk update and duplicate on every collection, and to update on every global, including those that other plugins or Payload add. A save whose data isn't an object is refused the same way.
+- A `pendingLevel` sent with a new invitation is dropped.
+- The organization picker checks a duplicated record as it checks a new one.
+- Tested: typecheck, build and leak check clean, and the 211 tests in this repo pass, full suite run twice, on Payload 3.92.1 and an in-memory MongoDB replica set. The changes in this release are untested by this repo's suite. 13 further tests, not in this repo, passed locally along with it. Not tested: a live site.
+
 ## 0.3.0 (2026-11-27)
 
 > **Check before upgrading: your approvers need read access.** Approving, activating a person in a pending organization, closing, reopening, and changing the ROR id or domains are all updates. With access checks on, someone `canApprove` allows now also needs read access to what they update: the organization, or the membership row when they activate a person. Without it they are refused. 0.2.0 didn't ask for read access on any of these, closing included.
