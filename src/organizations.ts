@@ -2,6 +2,7 @@ import type { CollectionConfig, PayloadRequest } from 'payload'
 
 import { isGenericDomain, isPublicSuffix, normalizeDomain } from './domains.js'
 import { vetoed } from './veto.js'
+import { hiddenOwnRows } from './view.js'
 import { asInternal, exactlyTrue, idOf, isInternal, levelIn, needTransaction, refuse, signedIn } from './helpers.js'
 import {
   EVENTS,
@@ -148,6 +149,8 @@ export function organizationsCollection(s: Resolved, opts: OrganizationsOptions)
 
   return {
     slug: ORGANIZATIONS,
+    // No Payload edit-lock rows for these documents; the plugin's own checks handle two changes at once.
+    lockDocuments: false,
     labels: { singular: 'Organization', plural: 'Organizations' },
     admin: {
       group: opts.adminGroup ?? 'Organizations',
@@ -172,7 +175,10 @@ export function organizationsCollection(s: Resolved, opts: OrganizationsOptions)
             overrideAccess: true,
             req,
           })
-          const ids = [...new Set((mine.docs as unknown as { organization: unknown }[]).map((r) => idOf(r.organization)).filter((x): x is string | number => x !== null))]
+          // An invitation never accepted shows its organization only to someone the veto would let accept it, so it can't carry a message to an account the site refuses.
+          const hidden = new Set((await hiddenOwnRows(req, s, opts, user.id)).map(String))
+          const visible = (mine.docs as unknown as { id: unknown; organization: unknown }[]).filter((r) => !hidden.has(String(r.id)))
+          const ids = [...new Set(visible.map((r) => idOf(r.organization)).filter((x): x is string | number => x !== null))]
           return ids.length ? { id: { in: ids } } : false
         } catch {
           return false

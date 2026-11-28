@@ -89,6 +89,13 @@ export type RefuseArgs = {
   userId: string | number
   level: Level
   action: 'invite' | 'accept' | 'approve' | 'change-level' | 'reopen' | 'suggest'
+  /**
+   * True when nothing is being changed: the invited person is reading, and the plugin asks what accepting would answer
+   * so it can hide the organization and who invited them from someone the veto would refuse. Give the same answer as
+   * without it, and only skip side effects: returning `null` or nothing early here shows the details. Keep it quick; an
+   * answer slower than two seconds counts as a refusal here.
+   */
+  preview?: true
 }
 export type RefuseMember = (args: RefuseArgs) => string | null | undefined | Promise<string | null | undefined>
 

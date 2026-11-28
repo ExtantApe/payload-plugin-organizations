@@ -3,6 +3,7 @@ import type { CollectionConfig, PayloadRequest, Where } from 'payload'
 import { emit, involved, noBulk, note, orgOf } from './organizations.js'
 import { asInternal, claim, exactlyTrue, heldBy, idOf, isInternal, levelIn, levelOf, needTransaction, refuse, signedIn } from './helpers.js'
 import { GENERAL, loadOrganization, vetoed } from './veto.js'
+import { forgetHidden, hiddenOwnRows, hidesOwnRow, inQuiet, inVeto, neverAccepted, quietly } from './view.js'
 import { EVENTS, LEVELS, MEMBERS, ORGANIZATIONS, RANK, type Level, type MemberArgs, type Membership, type MemberStatus, type OrganizationsOptions, type Resolved } from './types.js'
 
 const LIVE: MemberStatus[] = ['invited', 'active']
@@ -84,6 +85,8 @@ export function membersCollection(s: Resolved, opts: OrganizationsOptions): Coll
 
   return {
     slug: MEMBERS,
+    // No Payload edit-lock rows for these documents; the plugin's own checks handle two changes at once.
+    lockDocuments: false,
     labels: { singular: 'Organization member', plural: 'Organization members' },
     admin: {
       group: opts.adminGroup ?? 'Organizations',
@@ -103,10 +106,13 @@ export function membersCollection(s: Resolved, opts: OrganizationsOptions): Coll
           const held = await heldBy(req)
           const staffed = held.filter((h) => h.level === 'coordinator').map((h) => h.organization)
           const joined = held.map((h) => h.organization)
+          // Their own rows, except an invitation never accepted that the veto would refuse: its organization, inviter and remover stay hidden from that account.
+          const hidden = await hiddenOwnRows(req, s, opts, user.id)
+          const own = hidden.length ? { and: [{ user: { equals: user.id } }, { id: { not_in: hidden } }] } : { user: { equals: user.id } }
           // A Coordinator sees every row in their organizations. Anyone else sees the Coordinators, and their own row.
           return {
             or: [
-              { user: { equals: user.id } },
+              own,
               ...(staffed.length ? [{ organization: { in: staffed } }] : []),
               ...(joined.length ? [{ and: [{ organization: { in: joined } }, { level: { equals: 'coordinator' } }, { status: { equals: 'active' } }] }] : []),
             ],
@@ -307,6 +313,45 @@ export function membersCollection(s: Resolved, opts: OrganizationsOptions): Coll
           await claim(req, MEMBERS, originalDoc.id)
           return changed
         },
+        // Runs last, once a write is allowed, so the document it returns is checked against the rows as they will be.
+        ({ data, req }) => {
+          forgetHidden(req)
+          return data
+        },
+      ],
+      afterRead: [
+        // One rule for every document this collection returns, from finds, populating, REST, GraphQL and writes alike:
+        // a person's own invitation that the veto would refuse goes back without its organization, inviter or remover.
+        async ({ doc, req }) => {
+          if (!req.user || isInternal(req) || inQuiet()) return doc
+          const user = signedIn(req, s)
+          if (!user) return doc
+          const strip = () => {
+            const { organization: _o, invitedBy: _i, removedBy: _r, ...rest } = doc as Record<string, unknown>
+            return rest
+          }
+          const id = (doc as { id?: string | number }).id
+          if (id === undefined || id === null) return strip()
+          try {
+            let stored: Record<string, unknown> | null = null
+            const value = async (name: string) => {
+              if (name in doc) return (doc as Record<string, unknown>)[name]
+              stored ??= (await quietly(() => req.payload.findByID({ collection: MEMBERS as never, id, depth: 0, overrideAccess: true, req }))) as unknown as Record<string, unknown>
+              return stored[name]
+            }
+            if (String(idOf(await value('user'))) !== String(user.id)) return doc
+            // A read the veto makes during a quiet check gets the same answer the check would give while it waits: hidden.
+            if (inVeto()) return neverAccepted({ status: await value('status'), acceptedAt: await value('acceptedAt') }) ? strip() : doc
+            if (!(await hidesOwnRow(req, s, opts, user.id, id))) return doc
+            // Managers and Coordinators of the organization keep what they see.
+            if (opts.canRead && (await exactlyTrue(() => opts.canRead!({ req, user })))) return doc
+            const organization = idOf(await value('organization'))
+            if ((await quietly(() => heldBy(req))).some((h) => h.level === 'coordinator' && String(h.organization) === String(organization))) return doc
+          } catch {
+            // Can't tell, so hide.
+          }
+          return strip()
+        },
       ],
       afterChange: [
         async ({ doc, previousDoc, operation, req }) => {
@@ -364,6 +409,7 @@ export function eventsCollection(s: Resolved, opts: OrganizationsOptions): Colle
   }
   return {
     slug: EVENTS,
+    lockDocuments: false,
     labels: { singular: 'Organization event', plural: 'Organization events' },
     admin: { group: opts.adminGroup ?? 'Organizations', defaultColumns: ['organization', 'event', 'memberId', 'createdAt'], description: 'What changed in each organization, and who changed it. Append-only.' },
     access: {
