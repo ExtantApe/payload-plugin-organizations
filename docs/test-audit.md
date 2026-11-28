@@ -2,6 +2,13 @@
 
 Kept by this repo's owning session, per `~/Code/CLAUDE.md`, "Test self-audits". Newest first.
 
+## 2026-11-27: approvers and read access (0.3.0)
+
+- Promise documented: with access checks on, `canApprove` alone isn't enough to activate, approve, close, reopen or change a ROR id or domains. The person also needs read access to the organization, or to the membership row when they activate a person.
+- Before: staff, who can read everything in the test site, were shown approving. No test had an approver without read access.
+- Added: `test/write-limits.test.ts`, "an approver and read access" (18 tests, 211 in all). One approver who isn't staff or a member, with only `canRead` changing. Activating a first Coordinator, approving, closing, reopening, a ROR id and domains: refused on every update path with nothing changed, then allowed once they can read. All 18 fail when run against the 0.2.0 source.
+- Gaps skipped: an approver whose read access comes from their own membership (the existing tests of Coordinators and members cover that read rule); a host that scopes read access to some organizations only (the existing narrower and wider read rule tests cover how the two rules combine); the admin screens; a live site.
+
 ## 2026-11-27: read limits on writes
 
 - Promises added: an access-checked update of an organization or membership needs read access under the plugin's rule and the host's; a person can decline, or try to accept, their own hidden invitation by sending that status alone, and gets no document back.

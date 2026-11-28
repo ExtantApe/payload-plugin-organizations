@@ -538,3 +538,46 @@ describe('a host that changes read access', () => {
     expect((await rowOf(live.id, kid)).status).toBe('invited')
   })
 })
+
+/** Approving, closing, reopening and setting a ROR id or domains are updates, so `canApprove` alone isn't enough: the approver has to be able to read the row. */
+describe('an approver and read access', () => {
+  /** `eli` is an approver who belongs to nothing here. Only `canRead` differs between the two halves of each test. */
+  const approver = () => {
+    answers.canApprove = (a: { user: { id: Id } }) => a.user.id === eli.id
+  }
+  const letRead = () => {
+    answers.canRead = (a: { user: { id: Id } }) => a.user.id === eli.id
+  }
+  const closeFirst = async () => {
+    await editOrg(ann, live.id, { status: 'closed' })
+  }
+
+  const cases: { what: string; slug: Slug; target: () => Promise<Id>; data: Record<string, unknown>; before?: () => Promise<void> }[] = [
+    { what: 'activating the first Coordinator', slug: MEMBERS, target: async () => (await rowOf(pending.id, sam)).id, data: { status: 'active' } },
+    { what: 'approving an organization', slug: ORGS, target: async () => pending.id, data: { status: 'active' } },
+    { what: 'closing', slug: ORGS, target: async () => live.id, data: { status: 'closed' } },
+    { what: 'reopening', slug: ORGS, target: async () => live.id, data: { status: 'active' }, before: closeFirst },
+    { what: 'setting a ROR id', slug: ORGS, target: async () => live.id, data: { rorId: '02mhbdp94' } },
+    { what: 'setting domains', slug: ORGS, target: async () => live.id, data: { domains: ['made-up-reserve.example'] } },
+  ]
+
+  describe.each(cases)('$what', ({ slug, target, data, before }) => {
+    it.each(['Local depth 0', 'REST depth 0', 'GraphQL'])('is refused without it, and the same person succeeds with it over %s', async (path) => {
+      await before?.()
+      approver()
+      const id = await target()
+      const untouched = await stored()
+      for (const [name, run] of updates(eli, slug, id, data)) {
+        const a = await run()
+        expect([name, a.status, given(eli, a)]).toEqual([name, 'refused', []])
+      }
+      expect(await stored()).toBe(untouched)
+
+      letRead()
+      const a = await updates(eli, slug, id, data).find(([name]) => name === path)![1]()
+      expect([a.status, a.status === 'ok' ? '' : JSON.stringify(a.body)]).toEqual(['ok', ''])
+      const row = (await state.payload.findByID({ collection: slug as never, id: id as never, depth: 0, overrideAccess: true })) as unknown as Record<string, unknown>
+      expect(row).toMatchObject(data)
+    }, 60_000)
+  })
+})
